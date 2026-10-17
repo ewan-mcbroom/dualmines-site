@@ -1,29 +1,47 @@
 [
   {
-    "name": "Example Owner",
-    "skin": "MHF_Steve",
+    "name": "zxppez",
+    "skin": "zxppez",
     "roles": [
       "Owner"
     ],
-    "discord": "example_owner",
-    "bio": "Example entry. Replace this with a real staff member's name, Discord and a short bio."
+    "discord": "zxppez",
+    "bio": "The owner and founder of DualMines. Responsible for overseeing all operations and ensuring a smooth experience for all players"
   },
   {
-    "name": "Example Dev",
-    "skin": "MHF_Alex",
+    "name": "c9rey",
+    "skin": "c9rey",
     "roles": [
-      "Developer"
+      "Staff Manager"
     ],
-    "discord": "example_dev",
-    "bio": "Example entry. Put their Minecraft username in \"skin\" and their skin appears automatically."
+    "discord": ".c9rey",
+    "bio": "Manages our wonderful staff team. In charge of recruitment and ensuring our moderation team is up to standards."
   },
   {
-    "name": "Example Mod",
-    "skin": "MHF_Steve",
+    "name": "Lias",
+    "skin": "Lias0_0",
     "roles": [
-      "Moderator"
+      "Community Manager"
     ],
-    "discord": "example_mod",
-    "bio": "Example entry. Delete any you don't need and add as many as you like."
-  }
+    "discord": "lias1948",
+    "bio": "Manages our wonderful community. Hosts events, maintains engagement, helps anyone who needs help."
+  },
+  {
+    "name": "TayTayXIII",
+    "skin": "TayTayXIII",
+    "roles": [
+      "Helper"
+    ],
+    "discord": "taytayxiii",
+    "bio": "Moderates chat and creates a friendly environment for all players."
+  },
+  {
+    "name": "Jamalfr",
+    "skin": "Jamalfr",
+    "roles": [
+      "Helper"
+    ],
+    "discord": "jamalfr_.",
+    "bio": "Moderates chat and creates a friendly environment for all players."
+  },
 ]
