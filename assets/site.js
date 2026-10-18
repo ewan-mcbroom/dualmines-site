@@ -174,7 +174,8 @@ $$("[data-staff]").forEach((box) => {
         <div class="staff-track" tabindex="0" aria-label="Staff members">${staff.map(staffCard).join("")}</div>
         <button class="slide-arrow next" type="button" aria-label="Next staff">${ARROW}</button>
       </div>
-      <div class="slide-dots" aria-hidden="true"></div>`;
+      <div class="slide-dots" aria-hidden="true"></div>
+      <div class="slide-count" aria-live="polite"></div>`;
       setupSlider(box);
       $$("img[data-skin]", box).forEach((img) =>
         img.addEventListener("error", () => {
@@ -219,6 +220,8 @@ function setupSlider(box) {
     next.disabled = track.scrollLeft >= max;
     box.classList.toggle("no-slide", max <= 0);
     $$("i", dotsBox).forEach((d, k) => d.classList.toggle("on", k === i));
+    const count = $(".slide-count", box);
+    if (count) count.textContent = cards.length > 1 ? `${i + 1} / ${cards.length}` : "";
   }
 
   prev.addEventListener("click", () => track.scrollBy({ left: -step(), behavior: "smooth" }));
