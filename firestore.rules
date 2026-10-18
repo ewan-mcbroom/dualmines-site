@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Admin accounts. Add a line for each admin username (username@dualmines.net).
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email in [
+        'ewan@dualmines.net'
+      ];
+    }
+
+    function formIsOpen() {
+      return exists(/databases/$(database)/documents/settings/applicationForm)
+        && get(/databases/$(database)/documents/settings/applicationForm).data.open == true;
+    }
+
+    // The application form questions: anyone can read, only admins can change.
+    match /settings/applicationForm {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Applications: anyone can send one while the form is open,
+    // but only admins can read, accept, reject or delete them.
+    match /applications/{id} {
+      allow create: if formIsOpen()
+        && request.resource.data.keys().hasOnly(['answers', 'status', 'createdAt'])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.answers is list
+        && request.resource.data.answers.size() <= 60;
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}
