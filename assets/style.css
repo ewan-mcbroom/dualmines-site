@@ -131,13 +131,29 @@ section.block{padding-block:64px}
 .staff-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(210px, 1fr));gap:20px}
 /* staff slider */
 .slider{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px}
-.staff-track{--per:4;display:grid;grid-auto-flow:column;grid-auto-columns:calc((100% - (var(--per) - 1) * 20px) / var(--per));gap:20px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;scrollbar-width:none;padding-block:6px 12px;outline:none}
+.staff-track{--per:1;display:grid;grid-auto-flow:column;grid-auto-columns:calc((100% - (var(--per) - 1) * 20px) / var(--per));gap:20px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;scrollbar-width:none;padding-block:6px 12px;outline:none}
 .staff-track::-webkit-scrollbar{display:none}
 .staff-track > .staff{scroll-snap-align:start}
+/* one big card per slide */
+.slider{max-width:960px;margin:0 auto}
+.staff-track .staff{grid-template-rows:none;grid-template-columns:minmax(0,5fr) minmax(0,7fr);min-height:420px;border-top-width:6px}
+.staff-track .staff .skin{height:auto;min-height:340px;place-items:center;background:radial-gradient(ellipse at 50% 60%, color-mix(in srgb, var(--c, var(--ice)) 30%, transparent), transparent 70%)}
+.staff-track .staff .skin img{height:320px}
+.staff-track .staff .skin .ph{width:110px;height:280px}
+.staff-track .staff .info{padding:clamp(22px,4vw,40px);gap:16px;align-content:center}
+.staff-track .staff .chip{font-size:.85rem;padding:5px 14px}
+.staff-track .staff h3{font-size:clamp(2rem,4.5vw,3rem)}
+.staff-track .staff .handle{font-size:1rem}
+.staff-track .staff .handle svg{width:18px;height:18px}
+.staff-track .staff p.bio{font-size:1.05rem;max-width:44ch}
+.staff-track .staff .nm{justify-self:start;font-size:.9rem;padding-top:16px;min-width:60%}
+.slide-count{text-align:center;color:var(--muted);font-family:var(--mono);font-size:1.4rem;margin-top:10px}
+@media (max-width:700px){
+  .staff-track .staff{grid-template-columns:1fr;min-height:0}
+  .staff-track .staff .skin{min-height:240px}
+  .staff-track .staff .skin img{height:220px}
+}
 .staff-track:focus-visible{outline:3px solid var(--ice-hi);outline-offset:4px}
-@media (max-width:1100px){.staff-track{--per:3}}
-@media (max-width:820px){.staff-track{--per:2}}
-@media (max-width:540px){.staff-track{--per:1}}
 .slide-arrow{width:52px;height:52px;display:grid;place-items:center;background:var(--ice);color:var(--on-ice);border:3px solid var(--on-ice);box-shadow:0 0 0 2px var(--ice), 0 5px 0 rgba(0,0,0,.4);cursor:pointer;padding:0}
 .slide-arrow svg{width:26px;height:26px}
 .slide-arrow.prev svg{transform:scaleX(-1)}
