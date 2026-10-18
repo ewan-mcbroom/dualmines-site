@@ -169,7 +169,13 @@ $$("[data-staff]").forEach((box) => {
         box.innerHTML = '<p class="empty panel">Staff list coming soon.</p>';
         return;
       }
-      box.innerHTML = '<div class="staff-grid">' + staff.map(staffCard).join("") + "</div>";
+      box.innerHTML = `<div class="slider">
+        <button class="slide-arrow prev" type="button" aria-label="Previous staff">${ARROW}</button>
+        <div class="staff-track" tabindex="0" aria-label="Staff members">${staff.map(staffCard).join("")}</div>
+        <button class="slide-arrow next" type="button" aria-label="Next staff">${ARROW}</button>
+      </div>
+      <div class="slide-dots" aria-hidden="true"></div>`;
+      setupSlider(box);
       $$("img[data-skin]", box).forEach((img) =>
         img.addEventListener("error", () => {
           const ph = document.createElement("div");
@@ -182,6 +188,50 @@ $$("[data-staff]").forEach((box) => {
       box.innerHTML = '<p class="empty panel">The staff list couldn\'t load. If you just edited <b>data/staff.json</b>, check it for a missing comma or quote mark.</p>';
     });
 });
+
+const ARROW = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 4h3v3h3v3h3v4h-3v3h-3v3H8v-3h3v-3h3v-4h-3V7H8z"/></svg>';
+
+function setupSlider(box) {
+  const track = $(".staff-track", box);
+  const prev = $(".prev", box);
+  const next = $(".next", box);
+  const dotsBox = $(".slide-dots", box);
+  const cards = $$(".staff", track);
+
+  // how far one arrow click moves: one card plus the gap
+  const step = () => {
+    const gap = parseFloat(getComputedStyle(track).columnGap) || 0;
+    return cards[0].getBoundingClientRect().width + gap;
+  };
+  const perView = () => Math.max(1, Math.round(track.clientWidth / step()));
+  const pages = () => Math.max(1, cards.length - perView() + 1);
+  const index = () => Math.round(track.scrollLeft / step());
+
+  function drawDots() {
+    const n = pages();
+    dotsBox.innerHTML = n > 1 ? Array.from({ length: n }, () => "<i></i>").join("") : "";
+    update();
+  }
+  function update() {
+    const i = index();
+    const max = track.scrollWidth - track.clientWidth - 2;
+    prev.disabled = track.scrollLeft <= 2;
+    next.disabled = track.scrollLeft >= max;
+    box.classList.toggle("no-slide", max <= 0);
+    $$("i", dotsBox).forEach((d, k) => d.classList.toggle("on", k === i));
+  }
+
+  prev.addEventListener("click", () => track.scrollBy({ left: -step(), behavior: "smooth" }));
+  next.addEventListener("click", () => track.scrollBy({ left: step(), behavior: "smooth" }));
+  track.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") { e.preventDefault(); prev.click(); }
+    if (e.key === "ArrowRight") { e.preventDefault(); next.click(); }
+  });
+  let t;
+  track.addEventListener("scroll", () => { clearTimeout(t); t = setTimeout(update, 60); }, { passive: true });
+  addEventListener("resize", drawDots);
+  drawDots();
+}
 
 function staffCard(s) {
   const roles = Array.isArray(s.roles) ? s.roles : [s.role || s.roles || "Staff"];
