@@ -28,4 +28,4 @@ export const firebaseConfig = {
 
 /* Admin usernames are turned into emails ending in this domain.
    e.g. username "ewan" logs in as ewan@dualmines.net in Firebase. */
-export const ADMIN_EMAIL_DOMAIN = "dualmines.net";
+export const ADMIN_EMAIL_DOMAIN = "zxppez";
