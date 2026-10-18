@@ -1,4 +1,4 @@
-import api, { QUESTION_TYPES, HAS_OPTIONS, friendlyError } from "./backend.js";
+import api, { QUESTION_TYPES, HAS_OPTIONS, USERNAME_RULE, friendlyError, normalizeForm } from "./backend.js";
 
 const root = document.getElementById("admin");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -14,10 +14,15 @@ const S = {
   loadingApps: false,
   openId: null,
   confirmClear: false,
+  roleFilter: "all",
   form: null,
   draft: null,
   dirty: false,
   msg: "",
+  admins: [],
+  adminsLoaded: false,
+  confirmRemove: null,
+  note: "",
 };
 
 /* ------------------------- login ------------------------- */
@@ -69,7 +74,7 @@ async function loadApps() {
 }
 async function loadForm() {
   try {
-    S.form = await api.getForm();
+    S.form = normalizeForm(await api.getForm());
   } catch (e) {
     S.msg = "Couldn't load the questions. " + friendlyError(e);
     S.form = { open: true, intro: "", questions: [] };
@@ -82,43 +87,63 @@ async function loadForm() {
 function render() {
   if (!S.user) return;
   const counts = { pending: 0, accepted: 0, rejected: 0 };
-  S.apps.forEach((a) => (counts[a.status] = (counts[a.status] || 0) + 1));
+  S.apps.filter(roleMatch).forEach((a) => (counts[a.status] = (counts[a.status] || 0) + 1));
+  const allPending = S.apps.filter((a) => a.status === "pending").length;
   root.innerHTML = `
   <div class="admin-bar">
     <div class="tabs" role="tablist">
-      <button role="tab" class="tab-btn" aria-selected="${S.tab === "apps"}" data-tab="apps">Applications${counts.pending ? `<span class="badge">${counts.pending}</span>` : ""}</button>
+      <button role="tab" class="tab-btn" aria-selected="${S.tab === "apps"}" data-tab="apps">Applications${allPending ? `<span class="badge">${allPending}</span>` : ""}</button>
       <button role="tab" class="tab-btn" aria-selected="${S.tab === "questions"}" data-tab="questions">Questions${S.dirty ? '<span class="badge warn">unsaved</span>' : ""}</button>
+      <button role="tab" class="tab-btn" aria-selected="${S.tab === "admins"}" data-tab="admins">Admins</button>
     </div>
     <div class="who">${api.demo ? '<span class="chip" style="--c:var(--gold)">Demo</span>' : ""}Signed in as <b>${esc(S.user.name)}</b><button class="pxbtn" id="logout" type="button">Log out</button></div>
   </div>
   ${S.msg ? `<p class="form-err" role="alert">${esc(S.msg)}</p>` : ""}
-  <div id="view">${S.tab === "apps" ? appsView(counts) : questionsView()}</div>`;
+  <div id="view">${S.tab === "apps" ? appsView(counts) : S.tab === "questions" ? questionsView() : adminsView()}</div>`;
 
   root.querySelectorAll("[data-tab]").forEach((b) =>
-    b.addEventListener("click", () => { S.tab = b.dataset.tab; S.msg = ""; render(); })
+    b.addEventListener("click", () => {
+      S.tab = b.dataset.tab; S.msg = ""; S.note = ""; S.confirmRemove = null;
+      render();
+      if (S.tab === "admins" && !S.adminsLoaded) loadAdmins();
+    })
   );
   document.getElementById("logout").addEventListener("click", () => api.logout());
   if (S.tab === "apps") bindApps();
-  else bindQuestions();
+  else if (S.tab === "questions") bindQuestions();
+  else bindAdmins();
 }
 
 /* ------------------------- applications ------------------------- */
 const STATUS_LABEL = { pending: "Pending", accepted: "Accepted", rejected: "Rejected" };
 const STATUS_COL = { pending: "var(--ice)", accepted: "#5ee38a", rejected: "#ff6b6b" };
 
+function roleOf(a) {
+  const r = (a.answers || []).find((x) => x.type === "role");
+  return r ? r.value : "";
+}
+function roleMatch(a) {
+  if (S.roleFilter === "all") return true;
+  const role = S.form && S.form.roles.find((r) => r.id === S.roleFilter);
+  return !!role && roleOf(a).toLowerCase() === role.name.toLowerCase();
+}
 function titleFor(a) {
-  const first = (a.answers || []).find((x) => x.value);
+  const first = (a.answers || []).find((x) => x.value && x.type !== "role");
   return first ? first.value : "Untitled application";
 }
 function subtitleFor(a) {
   const ans = a.answers || [];
-  const role = ans.find((x) => /role|position|applying/i.test(x.q) && x.value);
+  const role = ans.find((x) => x.type === "role" && x.value) || ans.find((x) => /role|position|applying/i.test(x.q) && x.value);
   const disc = ans.find((x) => /discord/i.test(x.q) && x.value);
   return [role && role.value, disc && "Discord: " + disc.value].filter(Boolean).join(" • ");
 }
 
 function appsView(counts) {
-  const list = S.apps.filter((a) => a.status === S.filter);
+  const list = S.apps.filter((a) => a.status === S.filter && roleMatch(a));
+  const roleSel = `<select class="inp role-filter" id="roleFilter" aria-label="Filter by role">
+      <option value="all">All roles</option>
+      ${S.form.roles.map((r) => `<option value="${esc(r.id)}"${S.roleFilter === r.id ? " selected" : ""}>${esc(r.name)}</option>`).join("")}
+    </select>`;
   const filters = ["pending", "accepted", "rejected"]
     .map((f) => `<button class="sub-btn" aria-pressed="${S.filter === f}" data-filter="${f}" style="--c:${STATUS_COL[f]}">${STATUS_LABEL[f]} <span>${counts[f] || 0}</span></button>`)
     .join("");
@@ -139,7 +164,7 @@ function appsView(counts) {
 
   return `
   <div class="toolbar">
-    <div class="subtabs">${filters}</div>
+    <div class="subtabs">${filters}${roleSel}</div>
     <div class="toolbar-right">${clear}<button class="pxbtn" id="refresh" type="button">${S.loadingApps ? "Refreshing…" : "Refresh"}</button></div>
   </div>
   <div class="app-list">${items}</div>`;
@@ -191,6 +216,8 @@ function bindApps() {
       render();
     })
   );
+  const rf = document.getElementById("roleFilter");
+  if (rf) rf.addEventListener("change", () => { S.roleFilter = rf.value; S.openId = null; S.confirmClear = false; render(); });
   const r = document.getElementById("refresh");
   if (r) r.addEventListener("click", loadApps);
   const c = document.getElementById("clearList");
@@ -200,7 +227,7 @@ function bindApps() {
   const y = document.getElementById("clearYes");
   if (y)
     y.addEventListener("click", async () => {
-      const ids = S.apps.filter((a) => a.status === S.filter).map((a) => a.id);
+      const ids = S.apps.filter((a) => a.status === S.filter && roleMatch(a)).map((a) => a.id);
       y.disabled = true;
       y.textContent = "Clearing…";
       try {
@@ -246,6 +273,11 @@ function questionsView() {
         </div>
         <label class="q-label" for="qh_${i}">Help text <span class="opt">(optional, shown under the question)</span></label>
         <input class="inp" id="qh_${i}" data-k="help" value="${esc(q.help || "")}">
+        <p class="q-label">Ask this for</p>
+        <div class="askfor">
+          <label class="pill-check"><input type="checkbox" data-askall${!q.roles || !q.roles.length ? " checked" : ""}><span>All roles</span></label>
+          ${d.roles.map((r) => `<label class="pill-check"><input type="checkbox" data-askrole="${esc(r.id)}"${q.roles && q.roles.includes(r.id) ? " checked" : ""}><span>${esc(r.name)}${r.open ? "" : " (closed)"}</span></label>`).join("")}
+        </div>
       </div>`;
     })
     .join("");
@@ -256,6 +288,11 @@ function questionsView() {
     <label class="switch big"><input type="checkbox" id="openToggle"${d.open ? " checked" : ""}><span class="sw"></span>Applications are <b>${d.open ? "open" : "closed"}</b></label>
     <label class="q-label" for="intro">Intro text <span class="opt">(shown at the top of the form)</span></label>
     <textarea class="inp" id="intro" rows="3">${esc(d.intro || "")}</textarea>
+    <p class="q-label">Roles open for applications</p>
+    <div class="role-toggles">
+      ${d.roles.map((r) => `<label class="switch role-toggle"><input type="checkbox" data-roleopen="${esc(r.id)}"${r.open ? " checked" : ""}><span class="sw"></span><span><b>${esc(r.name)}</b> <small>${r.open ? "Open" : "Closed"}</small></span></label>`).join("")}
+    </div>
+    ${d.open && !d.roles.some((r) => r.open) ? '<p class="help" style="color:var(--gold)">All roles are closed, so the Apply page will show applications as closed.</p>' : ""}
   </div>
   <div class="qlist">${qs || '<p class="empty panel">No questions yet. Add your first one below.</p>'}</div>
   <button class="pxbtn add-q" id="addQ" type="button">+ Add question</button>
@@ -285,6 +322,14 @@ function bindQuestions() {
   const view = document.getElementById("view");
 
   document.getElementById("openToggle").addEventListener("change", (e) => { d.open = e.target.checked; S.dirty = true; render(); });
+  view.querySelectorAll("[data-roleopen]").forEach((el) =>
+    el.addEventListener("change", () => {
+      const r = d.roles.find((x) => x.id === el.dataset.roleopen);
+      r.open = el.checked;
+      S.dirty = true;
+      render();
+    })
+  );
   document.getElementById("intro").addEventListener("input", (e) => { d.intro = e.target.value; markDirty(); });
 
   view.querySelectorAll(".qcard").forEach((card) => {
@@ -305,6 +350,22 @@ function bindQuestions() {
         markDirty();
       });
     });
+    card.querySelector("[data-askall]").addEventListener("change", (e) => {
+      if (e.target.checked) q.roles = [];
+      else q.roles = d.roles.map((r) => r.id);
+      S.dirty = true;
+      render();
+    });
+    card.querySelectorAll("[data-askrole]").forEach((el) =>
+      el.addEventListener("change", () => {
+        const set = new Set(q.roles || []);
+        if (el.checked) set.add(el.dataset.askrole); else set.delete(el.dataset.askrole);
+        q.roles = d.roles.map((r) => r.id).filter((id) => set.has(id));
+        if (q.roles.length === d.roles.length) q.roles = [];
+        S.dirty = true;
+        render();
+      })
+    );
     card.querySelectorAll("[data-move]").forEach((b) =>
       b.addEventListener("click", () => {
         const j = i + Number(b.dataset.move);
@@ -350,9 +411,11 @@ function bindQuestions() {
     const clean = {
       open: !!d.open,
       intro: d.intro || "",
+      roles: d.roles.map((r) => ({ id: r.id, name: r.name, open: !!r.open, blurb: r.blurb || "" })),
       questions: d.questions.map((q) => {
         const o = { id: q.id || newId(), label: q.label.trim(), type: q.type, required: !!q.required, help: (q.help || "").trim() };
         if (HAS_OPTIONS.includes(q.type)) o.options = q.options;
+        if (q.roles && q.roles.length) o.roles = q.roles;
         return o;
       }),
     };
@@ -369,6 +432,174 @@ function bindQuestions() {
   });
 }
 
+/* ------------------------- admins ------------------------- */
+async function loadAdmins() {
+  let err = "";
+  try {
+    S.admins = (await api.listAdmins()).sort((a, b) => (b.owner - a.owner) || a.username.localeCompare(b.username));
+    S.adminsLoaded = true;
+  } catch (e) {
+    err = "Couldn't load the admin list. " + friendlyError(e);
+  }
+  if (S.tab !== "admins") return;
+  const ul = document.getElementById("adminRows");
+  if (!ul) return render();
+  ul.innerHTML = adminRows();
+  bindRows();
+  if (err) showNote(err, true);
+}
+
+function adminRows() {
+  const owner = S.user.owner;
+  if (!S.adminsLoaded) return '<li class="empty">Loading admins…</li>';
+  return S.admins
+    .map((a) => {
+      const you = a.username === S.user.name;
+      let act = "";
+      if (owner && !a.owner && !you) {
+        act = S.confirmRemove === a.uid
+          ? `<span class="confirm">Remove ${esc(a.username)}?
+               <button class="btn-danger" type="button" data-rm-yes="${esc(a.uid)}">Yes, remove</button>
+               <button class="pxbtn" type="button" data-rm-no>Cancel</button></span>`
+          : `<button class="btn-danger ghost" type="button" data-rm="${esc(a.uid)}">Remove</button>`;
+      }
+      return `<li class="admin-row">
+        <span class="admin-name"><b>${esc(a.username)}</b>${a.owner ? '<span class="chip" style="--c:var(--gold)">Owner</span>' : '<span class="chip">Admin</span>'}${you ? '<span class="you">(you)</span>' : ""}</span>
+        <span class="admin-meta">${a.addedBy ? "Added by " + esc(a.addedBy) : ""}</span>
+        <span class="admin-act">${act}</span>
+      </li>`;
+    })
+    .join("");
+}
+
+function refreshRows() {
+  const ul = document.getElementById("adminRows");
+  if (ul) { ul.innerHTML = adminRows(); bindRows(); }
+}
+
+function showNote(text, isError) {
+  S.msg = isError ? text : "";
+  S.note = isError ? "" : text;
+  let box = document.getElementById("adminNote");
+  if (!box) return;
+  box.className = isError ? "form-err" : "ok-note";
+  box.textContent = text;
+  box.hidden = !text;
+  if (text) box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function adminsView() {
+  const owner = S.user.owner;
+  const addForm = owner
+    ? `<form class="panel admin-form" id="addAdmin" autocomplete="off">
+        <h3>Register a new admin</h3>
+        <p class="help">They'll log in at this page with the username and password you set here. They can change the password later.</p>
+        <label class="q-label" for="nu">Username</label>
+        <input class="inp" id="nu" name="u" autocomplete="off" required maxlength="20" placeholder="e.g. josh">
+        <p class="help">3–20 characters: lowercase letters, numbers, dots, dashes or underscores.</p>
+        <label class="q-label" for="np">Password</label>
+        <input class="inp" id="np" name="p" type="password" autocomplete="new-password" required minlength="8">
+        <label class="q-label" for="np2">Confirm password</label>
+        <input class="inp" id="np2" name="p2" type="password" autocomplete="new-password" required minlength="8">
+        <button class="btn-main" type="submit">Register admin</button>
+      </form>`
+    : `<div class="panel admin-form"><h3>Register a new admin</h3><p class="help">Only the server owner can add or remove admins.</p></div>`;
+
+  return `
+  <p id="adminNote" class="${S.note ? "ok-note" : "form-err"}" role="status"${S.note ? "" : " hidden"}>${esc(S.note)}</p>
+  <div class="admins-grid">
+    <div class="panel admin-list">
+      <h3>People with access</h3>
+      <ul id="adminRows">${adminRows()}</ul>
+    </div>
+    <div class="admin-side">
+      ${addForm}
+      <form class="panel admin-form" id="changePw">
+        <h3>Change my password</h3>
+        <label class="q-label" for="cp0">Current password</label>
+        <input class="inp" id="cp0" name="c" type="password" autocomplete="current-password" required>
+        <label class="q-label" for="cp1">New password</label>
+        <input class="inp" id="cp1" name="n" type="password" autocomplete="new-password" required minlength="8">
+        <label class="q-label" for="cp2">Confirm new password</label>
+        <input class="inp" id="cp2" name="n2" type="password" autocomplete="new-password" required minlength="8">
+        <button class="pxbtn" type="submit">Change password</button>
+      </form>
+    </div>
+  </div>`;
+}
+
+function bindRows() {
+  root.querySelectorAll("[data-rm]").forEach((b) => b.addEventListener("click", () => { S.confirmRemove = b.dataset.rm; refreshRows(); }));
+  root.querySelectorAll("[data-rm-no]").forEach((b) => b.addEventListener("click", () => { S.confirmRemove = null; refreshRows(); }));
+  root.querySelectorAll("[data-rm-yes]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const uid = b.dataset.rmYes;
+      const who = (S.admins.find((a) => a.uid === uid) || {}).username;
+      b.disabled = true;
+      try {
+        await api.removeAdmin(uid);
+        S.admins = S.admins.filter((a) => a.uid !== uid);
+        showNote(`${who} has been removed and can no longer use the admin panel.`);
+      } catch (e) {
+        showNote("Couldn't remove that admin. " + friendlyError(e), true);
+      }
+      S.confirmRemove = null;
+      refreshRows();
+    })
+  );
+}
+
+function bindAdmins() {
+  bindRows();
+
+  const add = document.getElementById("addAdmin");
+  if (add)
+    add.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const u = add.u.value.trim().toLowerCase();
+      let err = "";
+      if (!USERNAME_RULE.test(u)) err = "Usernames must be 3–20 characters: lowercase letters, numbers, dots, dashes or underscores.";
+      else if (add.p.value.length < 8) err = "Passwords need at least 8 characters.";
+      else if (add.p.value !== add.p2.value) err = "The two passwords don't match.";
+      else if (S.admins.some((a) => a.username === u)) err = `${u} is already an admin.`;
+      if (err) return showNote(err, true);
+      const btn = add.querySelector("button");
+      btn.disabled = true;
+      btn.textContent = "Registering…";
+      try {
+        await api.addAdmin(u, add.p.value);
+        add.reset();
+        await loadAdmins();
+        showNote(`${u} is now an admin. They can log in with the username "${u}" and the password you set.`);
+      } catch (er) {
+        showNote("Couldn't register that admin. " + friendlyError(er), true);
+      }
+      btn.disabled = false;
+      btn.textContent = "Register admin";
+    });
+
+  const pw = document.getElementById("changePw");
+  pw.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    let err = "";
+    if (pw.n.value.length < 8) err = "Your new password needs at least 8 characters.";
+    else if (pw.n.value !== pw.n2.value) err = "The two new passwords don't match.";
+    if (err) return showNote(err, true);
+    const btn = pw.querySelector("button");
+    btn.disabled = true;
+    btn.textContent = "Changing…";
+    try {
+      await api.changePassword(pw.c.value, pw.n.value);
+      pw.reset();
+      showNote("Your password has been changed.");
+    } catch (er) {
+      showNote(/invalid-credential|wrong-password/.test(er.code || "") ? "Your current password is wrong." : "Couldn't change your password. " + friendlyError(er), true);
+    }
+    btn.disabled = false;
+    btn.textContent = "Change password";
+  });
+}
+
 addEventListener("beforeunload", (e) => {
   if (S.dirty) { e.preventDefault(); e.returnValue = ""; }
 });
@@ -382,6 +613,17 @@ api.onAuth(async (user) => {
     renderLogin();
     return;
   }
+  if (!user.admin) {
+    root.innerHTML = `<div class="login panel">
+      <h2>No access</h2>
+      <p style="color:var(--muted)">The account <b>${esc(user.name)}</b> isn't on the admin list. Ask the server owner to add you.</p>
+      <button class="btn-main" id="logout" type="button">Log out</button>
+    </div>`;
+    document.getElementById("logout").addEventListener("click", () => api.logout());
+    return;
+  }
+  S.adminsLoaded = false;
+  S.tab = "apps";
   root.innerHTML = '<p class="empty panel">Loading…</p>';
   await loadForm();
   render();

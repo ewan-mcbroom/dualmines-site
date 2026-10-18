@@ -1,4 +1,4 @@
-import api, { friendlyError } from "./backend.js";
+import api, { friendlyError, normalizeForm } from "./backend.js";
 
 const root = document.getElementById("apply");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -42,7 +42,8 @@ function field(q, i) {
       input = `<input class="inp" id="${id}" name="${id}" type="text" maxlength="${LIMITS.short}"${r}${desc}>`;
   }
   const isGroup = ["choice", "yesno", "checkboxes"].includes(q.type);
-  return `<div class="field panel" data-i="${i}">
+  const forRoles = (q.roles || []).join(" ");
+  return `<div class="field panel" data-i="${i}" data-roles="${esc(forRoles)}">
     ${isGroup ? `<p class="q-label" id="${id}_l">${esc(q.label)}${req}</p>` : `<label class="q-label" id="${id}_l" for="${id}">${esc(q.label)}${req}</label>`}
     ${help}
     ${input}
@@ -63,14 +64,15 @@ function readValue(form, q, i) {
 async function start() {
   let data;
   try {
-    data = await api.getForm();
+    data = normalizeForm(await api.getForm());
   } catch (e) {
     root.innerHTML = `<p class="empty panel">The application form couldn't load. ${esc(friendlyError(e))}</p>`;
     return;
   }
   const questions = (data.questions || []).filter((q) => q && q.label);
 
-  if (!data.open) {
+  const openRoles = data.roles.filter((r) => r.open);
+  if (!data.open || !openRoles.length) {
     root.innerHTML = `${demoBanner()}<div class="panel closed"><h2>Applications are closed</h2><p>We're not taking staff applications right now. Keep an eye on the News page and our Discord for when they open again.</p></div>`;
     return;
   }
@@ -82,7 +84,14 @@ async function start() {
   root.innerHTML = `${demoBanner()}
     ${data.intro ? `<p class="lead">${esc(data.intro)}</p>` : ""}
     <form id="appForm" novalidate>
-      ${questions.map(field).join("")}
+      <div class="field panel role-field" data-role-pick>
+        <p class="q-label" id="role_l">What are you applying for? <span class="req" title="Required">*</span></p>
+        <div class="role-cards" role="radiogroup" aria-labelledby="role_l">
+          ${openRoles.map((r) => `<label class="role-card"><input type="radio" name="role" value="${esc(r.id)}"${openRoles.length === 1 ? " checked" : ""}><b>${esc(r.name)}</b>${r.blurb ? `<span>${esc(r.blurb)}</span>` : ""}</label>`).join("")}
+        </div>
+        <p class="err" hidden></p>
+      </div>
+      <div id="qs"${openRoles.length === 1 ? "" : " hidden"}>${questions.map(field).join("")}</div>
       <div class="hp" aria-hidden="true"><label>Leave this empty <input name="website" tabindex="-1" autocomplete="off"></label></div>
       <div class="submit-row">
         <button class="btn-main" type="submit" id="submitBtn">Submit application</button>
@@ -91,13 +100,35 @@ async function start() {
     </form>`;
 
   const form = document.getElementById("appForm");
+  const chosenRole = () => { const c = form.querySelector('[name="role"]:checked'); return c ? c.value : ""; };
+  const applies = (q, role) => !q.roles || !q.roles.length || q.roles.includes(role);
+  function showForRole() {
+    const role = chosenRole();
+    document.getElementById("qs").hidden = !role;
+    questions.forEach((q, i) => {
+      const box = form.querySelector(`.field[data-i="${i}"]`);
+      box.hidden = !applies(q, role);
+    });
+    const rp = form.querySelector("[data-role-pick]");
+    rp.classList.remove("bad");
+    rp.querySelector(".err").hidden = true;
+  }
+  form.querySelectorAll('[name="role"]').forEach((r) => r.addEventListener("change", showForRole));
+  showForRole();
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const btn = document.getElementById("submitBtn");
     const formErr = form.querySelector(".form-err");
     formErr.hidden = true;
     let firstBad = null;
-    const answers = questions.map((q, i) => {
+    const role = chosenRole();
+    const rp = form.querySelector("[data-role-pick]");
+    rp.classList.toggle("bad", !role);
+    rp.querySelector(".err").textContent = "Choose which role you're applying for.";
+    rp.querySelector(".err").hidden = !!role;
+    if (!role) firstBad = rp;
+    const asked = questions.map((q, i) => [q, i]).filter(([q]) => role && applies(q, role));
+    const answers = asked.map(([q, i]) => {
       const value = readValue(form, q, i);
       const box = form.querySelector(`.field[data-i="${i}"]`);
       const err = box.querySelector(".err");
@@ -110,6 +141,8 @@ async function start() {
       if (msg && !firstBad) firstBad = box;
       return { q: q.label, type: q.type, value };
     });
+    const roleName = (openRoles.find((r) => r.id === role) || {}).name || role;
+    answers.unshift({ q: "Role", type: "role", value: roleName });
     if (firstBad) {
       formErr.textContent = "Some questions need an answer. They're highlighted above.";
       formErr.hidden = false;

@@ -5,7 +5,7 @@ service cloud.firestore {
     // Admin accounts. Add a line for each admin username (username@dualmines.net).
     function isAdmin() {
       return request.auth != null && request.auth.token.email in [
-        'ewan@dualmines.net'
+        'zxppez@dualmines.net'
       ];
     }
 
