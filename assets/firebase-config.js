@@ -5,7 +5,15 @@
    everything works, but it's only saved in your own browser.
    ============================================================ */
 
-export const firebaseConfig = null;
+export const firebaseConfig = {
+  apiKey: "AIzaSyC8frjWJKyOXSAVT0gGo2m-AkZTYKfW79w",
+  authDomain: "dualmines-3d1fb.firebaseapp.com",
+  projectId: "dualmines-3d1fb",
+  storageBucket: "dualmines-3d1fb.firebasestorage.app",
+  messagingSenderId: "957942462979",
+  appId: "1:957942462979:web:e9fa89538af7a90d74ac36",
+  measurementId: "G-SKVDCPT38N"
+};
 
 /* Example of what it looks like once filled in:
 export const firebaseConfig = {
