@@ -39,7 +39,14 @@
 <header class="hero">
   <div class="hero-bg-wrap" aria-hidden="true"><canvas class="hero-bg"></canvas><div class="hero-photo"></div></div>
   <div class="wrap hero-inner">
-    <span class="live" data-players-wrap hidden><span class="dot"></span><b data-players>0</b> playing right now</span>
+    <div class="live-wrap" data-players-wrap hidden>
+      <button class="live" type="button" id="playersBtn" aria-expanded="false" aria-controls="playersPop"><span class="dot"></span><b data-players>0</b> playing right now <span class="caret" aria-hidden="true">▾</span></button>
+      <div class="players-pop panel" id="playersPop" role="dialog" aria-label="Players online" hidden>
+        <div class="pop-head"><b>Online now</b><button class="pop-x" type="button" id="playersClose" aria-label="Close">✕</button></div>
+        <ul class="plist" id="playersList"></ul>
+        <p class="pop-note" id="playersNote" hidden></p>
+      </div>
+    </div>
     <div class="brand">
       <img src="assets/logo.webp" alt="" width="230" height="230">
       <h1 class="sr-only">Dualmines</h1>

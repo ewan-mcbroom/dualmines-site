@@ -2,11 +2,27 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Admin accounts. Add a line for each admin username (username@dualmines.net).
-    function isAdmin() {
+    // OWNERS: can do everything, including adding and removing admins.
+    function isOwner() {
       return request.auth != null && request.auth.token.email in [
         'zxppez@dualmines.net'
       ];
+    }
+
+    // ADMINS: owners, plus anyone registered in the admin panel.
+    function isAdmin() {
+      return isOwner() || (request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    // APPLICANTS: people logged in with Discord (via the Discord login Worker).
+    function isApplicant() {
+      return request.auth != null && request.auth.token.discord_id is string
+        && request.auth.uid == 'discord:' + request.auth.token.discord_id;
+    }
+
+    function isBanned() {
+      return exists(/databases/$(database)/documents/bans/$(request.auth.token.discord_id));
     }
 
     function formIsOpen() {
@@ -14,22 +30,42 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/settings/applicationForm).data.open == true;
     }
 
-    // The application form questions: anyone can read, only admins can change.
+    match /admins/{uid} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+      allow write: if isOwner();
+    }
+
     match /settings/applicationForm {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // Applications: anyone can send one while the form is open,
-    // but only admins can read, accept, reject or delete them.
+    // Bans: admins manage them; a Discord user can check their own ban.
+    match /bans/{discordId} {
+      allow read: if isAdmin() || (isApplicant() && request.auth.token.discord_id == discordId);
+      allow write: if isAdmin();
+    }
+
     match /applications/{id} {
-      allow create: if formIsOpen()
-        && request.resource.data.keys().hasOnly(['answers', 'status', 'createdAt'])
+      // Only logged-in, non-banned Discord users, only while open,
+      // and the Discord details must match the account they logged in with.
+      allow create: if formIsOpen() && isApplicant() && !isBanned()
+        && request.resource.data.keys().hasOnly(['answers', 'status', 'createdAt', 'uid',
+             'discordId', 'discordName', 'discordDisplay', 'discordAvatar'])
         && request.resource.data.status == 'pending'
         && request.resource.data.createdAt == request.time
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.discordId == request.auth.token.discord_id
+        && request.resource.data.discordName == request.auth.token.discord_name
+        && request.resource.data.discordDisplay == request.auth.token.discord_display
+        && request.resource.data.discordAvatar == request.auth.token.discord_avatar
         && request.resource.data.answers is list
         && request.resource.data.answers.size() <= 60;
-      allow read, update, delete: if isAdmin();
+
+      // Admins see everything; applicants can see their own (to check their status).
+      allow read: if isAdmin()
+        || (isApplicant() && resource.data.discordId == request.auth.token.discord_id);
+      allow update, delete: if isAdmin();
     }
   }
 }

@@ -1,4 +1,4 @@
-import api, { QUESTION_TYPES, HAS_OPTIONS, USERNAME_RULE, friendlyError, normalizeForm } from "./backend.js";
+import api, { QUESTION_TYPES, HAS_OPTIONS, USERNAME_RULE, FORMATS, friendlyError, normalizeForm, avatarUrl } from "./backend.js";
 
 const root = document.getElementById("admin");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -23,7 +23,11 @@ const S = {
   adminsLoaded: false,
   confirmRemove: null,
   note: "",
+  bans: [],
+  banFor: null,
+  confirmUnban: null,
 };
+const isBanned = (discordId) => !!discordId && S.bans.some((b) => String(b.discordId || b.id) === String(discordId));
 
 /* ------------------------- login ------------------------- */
 function renderLogin(error = "") {
@@ -64,7 +68,9 @@ async function loadApps() {
   S.loadingApps = true;
   render();
   try {
-    S.apps = (await api.list()).sort((a, b) => b.createdAt - a.createdAt);
+    const [apps, bans] = await Promise.all([api.list(), api.listBans().catch(() => S.bans)]);
+    S.apps = apps.sort((a, b) => b.createdAt - a.createdAt);
+    S.bans = bans.sort((a, b) => b.createdAt - a.createdAt);
     S.msg = "";
   } catch (e) {
     S.msg = "Couldn't load applications. " + friendlyError(e);
@@ -94,12 +100,13 @@ function render() {
     <div class="tabs" role="tablist">
       <button role="tab" class="tab-btn" aria-selected="${S.tab === "apps"}" data-tab="apps">Applications${allPending ? `<span class="badge">${allPending}</span>` : ""}</button>
       <button role="tab" class="tab-btn" aria-selected="${S.tab === "questions"}" data-tab="questions">Questions${S.dirty ? '<span class="badge warn">unsaved</span>' : ""}</button>
+      <button role="tab" class="tab-btn" aria-selected="${S.tab === "bans"}" data-tab="bans">Bans${S.bans.length ? `<span class="badge red">${S.bans.length}</span>` : ""}</button>
       <button role="tab" class="tab-btn" aria-selected="${S.tab === "admins"}" data-tab="admins">Admins</button>
     </div>
     <div class="who">${api.demo ? '<span class="chip" style="--c:var(--gold)">Demo</span>' : ""}Signed in as <b>${esc(S.user.name)}</b><button class="pxbtn" id="logout" type="button">Log out</button></div>
   </div>
   ${S.msg ? `<p class="form-err" role="alert">${esc(S.msg)}</p>` : ""}
-  <div id="view">${S.tab === "apps" ? appsView(counts) : S.tab === "questions" ? questionsView() : adminsView()}</div>`;
+  <div id="view">${S.tab === "apps" ? appsView(counts) : S.tab === "questions" ? questionsView() : S.tab === "bans" ? bansView() : adminsView()}</div>`;
 
   root.querySelectorAll("[data-tab]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -111,6 +118,7 @@ function render() {
   document.getElementById("logout").addEventListener("click", () => api.logout());
   if (S.tab === "apps") bindApps();
   else if (S.tab === "questions") bindQuestions();
+  else if (S.tab === "bans") bindBans();
   else bindAdmins();
 }
 
@@ -134,8 +142,8 @@ function titleFor(a) {
 function subtitleFor(a) {
   const ans = a.answers || [];
   const role = ans.find((x) => x.type === "role" && x.value) || ans.find((x) => /role|position|applying/i.test(x.q) && x.value);
-  const disc = ans.find((x) => /discord/i.test(x.q) && x.value);
-  return [role && role.value, disc && "Discord: " + disc.value].filter(Boolean).join(" • ");
+  const disc = a.discordName ? "@" + a.discordName : (ans.find((x) => /discord/i.test(x.q) && x.value) || {}).value;
+  return [role && role.value, disc].filter(Boolean).join(" • ");
 }
 
 function appsView(counts) {
@@ -183,17 +191,89 @@ function appItem(a) {
          ${a.status === "accepted"
            ? `<button class="btn-danger ghost" data-act="rejected" data-id="${a.id}" type="button">Reject instead</button>`
            : `<button class="btn-ok ghost" data-act="accepted" data-id="${a.id}" type="button">Accept instead</button>`}`;
+  const banned = isBanned(a.discordId);
+  const discord = a.discordId
+    ? `<div class="dc-card">
+        <img src="${esc(avatarUrl(a.discordId, a.discordAvatar, 64))}" alt="" width="44" height="44">
+        <div class="dc-id"><b>${esc(a.discordDisplay || a.discordName)}</b><span>@${esc(a.discordName)} · ID <code>${esc(a.discordId)}</code>
+          <button class="linkbtn" type="button" data-copy="${esc(a.discordId)}">Copy ID</button></span></div>
+        ${banned
+          ? `<span class="chip" style="--c:#ff6b6b">Banned</span><button class="pxbtn" type="button" data-unban="${esc(a.discordId)}">Unban</button>`
+          : `<button class="btn-danger ghost" type="button" data-banopen="${a.id}">Ban from applying</button>`}
+      </div>
+      ${S.banFor === a.id && !banned ? `<form class="ban-form" data-banform="${a.id}">
+          <label class="q-label" for="br_${a.id}">Reason <span class="opt">(the applicant will see this)</span></label>
+          <input class="inp" id="br_${a.id}" name="reason" maxlength="200" placeholder="e.g. Spam applications">
+          <label class="pill-check"><input type="checkbox" name="reject" checked><span>Also reject their pending applications</span></label>
+          <div class="app-actions"><button class="btn-danger" type="submit">Ban ${esc(a.discordName)}</button><button class="pxbtn" type="button" data-bancancel>Cancel</button></div>
+        </form>` : ""}`
+    : '<p class="help">Sent before Discord login was required, so there\'s no Discord account linked.</p>';
   return `<article class="app panel${open ? " open" : ""}" style="--c:${STATUS_COL[a.status] || "var(--ice)"}">
     <button class="app-head" type="button" data-open="${a.id}" aria-expanded="${open}">
-      <span class="app-title"><b>${esc(titleFor(a))}</b><small>${esc(subtitleFor(a))}</small></span>
+      ${a.discordId ? `<img class="app-av" src="${esc(avatarUrl(a.discordId, a.discordAvatar, 64))}" alt="" width="36" height="36">` : '<span class="app-av"></span>'}
+      <span class="app-title"><b>${esc(titleFor(a))}${banned ? ' <span class="chip" style="--c:#ff6b6b">Banned</span>' : ""}</b><small>${esc(subtitleFor(a))}</small></span>
       <span class="app-date">${fmt(a.createdAt)}</span>
       <span class="chev" aria-hidden="true">▸</span>
     </button>
-    ${open ? `<div class="app-body"><dl>${answers}</dl><div class="app-actions">${actions}</div></div>` : ""}
+    ${open ? `<div class="app-body">${discord}<dl>${answers}</dl><div class="app-actions">${actions}</div></div>` : ""}
   </article>`;
 }
 
+function bindBanButtons() {
+  root.querySelectorAll("[data-copy]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const done = () => { b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy ID"), 1500); };
+      try { navigator.clipboard.writeText(b.dataset.copy).then(done, () => {}); } catch (e) {}
+    })
+  );
+  root.querySelectorAll("[data-banopen]").forEach((b) => b.addEventListener("click", () => {
+    S.banFor = b.dataset.banopen;
+    render();
+    const inp = root.querySelector(`[data-banform="${S.banFor}"] input[name=reason]`);
+    if (inp) inp.focus();
+  }));
+  root.querySelectorAll("[data-bancancel]").forEach((b) => b.addEventListener("click", () => { S.banFor = null; render(); }));
+  root.querySelectorAll("[data-banform]").forEach((f) =>
+    f.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const a = S.apps.find((x) => x.id === f.dataset.banform);
+      if (!a) return;
+      const btn = f.querySelector("button[type=submit]");
+      btn.disabled = true;
+      btn.textContent = "Banning…";
+      try {
+        await api.ban(a.discordId, { discordName: a.discordName, reason: f.reason.value.trim() });
+        if (f.reject.checked) {
+          const mine = S.apps.filter((x) => x.discordId === a.discordId && x.status === "pending");
+          for (const x of mine) { await api.setStatus(x.id, "rejected"); x.status = "rejected"; }
+        }
+        S.bans = await api.listBans();
+        S.msg = "";
+      } catch (err) {
+        S.msg = "Couldn't ban that user. " + friendlyError(err);
+      }
+      S.banFor = null;
+      render();
+    })
+  );
+  root.querySelectorAll("[data-unban]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try {
+        await api.unban(b.dataset.unban);
+        S.bans = S.bans.filter((x) => String(x.discordId || x.id) !== b.dataset.unban);
+        S.msg = "";
+      } catch (err) {
+        S.msg = "Couldn't unban that user. " + friendlyError(err);
+      }
+      S.confirmUnban = null;
+      render();
+    })
+  );
+}
+
 function bindApps() {
+  bindBanButtons();
   root.querySelectorAll("[data-filter]").forEach((b) =>
     b.addEventListener("click", () => { S.filter = b.dataset.filter; S.openId = null; S.confirmClear = false; render(); })
   );
@@ -243,6 +323,27 @@ function bindApps() {
 }
 
 /* ------------------------- questions ------------------------- */
+function validationEditor(q, i) {
+  const v = q.v || {};
+  const n = (k, label, ph) => `<label class="vbox"><span>${label}</span><input class="inp" type="number" data-v="${k}" value="${esc(v[k] ?? "")}" placeholder="${ph}" min="0"></label>`;
+  let inner = "";
+  if (q.type === "short") {
+    inner = `<label class="vbox wide"><span>Answer must be</span><select class="inp" data-v="format">${Object.entries(FORMATS)
+      .map(([k, f]) => `<option value="${k}"${(v.format || "") === k ? " selected" : ""}>${esc(f.label)}</option>`).join("")}</select></label>
+      ${n("min", "Min characters", "none")}${n("max", "Max characters", "200")}`;
+  } else if (q.type === "paragraph") {
+    inner = `${n("min", "Min characters", "none")}${n("max", "Max characters", "3000")}`;
+  } else if (q.type === "number") {
+    inner = `${n("min", "Lowest allowed", "none")}${n("max", "Highest allowed", "none")}
+      <label class="switch"><input type="checkbox" data-v="whole"${v.whole ? " checked" : ""}><span class="sw"></span>Whole numbers only</label>`;
+  } else if (q.type === "checkboxes") {
+    inner = `${n("min", "Pick at least", "none")}${n("max", "Pick at most", "none")}`;
+  } else {
+    return "";
+  }
+  return `<p class="q-label">Answer rules</p><div class="vrow">${inner}</div>`;
+}
+
 function questionsView() {
   const d = S.draft;
   const qs = d.questions
@@ -273,6 +374,7 @@ function questionsView() {
         </div>
         <label class="q-label" for="qh_${i}">Help text <span class="opt">(optional, shown under the question)</span></label>
         <input class="inp" id="qh_${i}" data-k="help" value="${esc(q.help || "")}">
+        ${validationEditor(q, i)}
         <p class="q-label">Ask this for</p>
         <div class="askfor">
           <label class="pill-check"><input type="checkbox" data-askall${!q.roles || !q.roles.length ? " checked" : ""}><span>All roles</span></label>
@@ -350,6 +452,15 @@ function bindQuestions() {
         markDirty();
       });
     });
+    card.querySelectorAll("[data-v]").forEach((el) => {
+      el.addEventListener(el.type === "checkbox" || el.tagName === "SELECT" ? "change" : "input", () => {
+        q.v = { ...(q.v || {}) };
+        const k = el.dataset.v;
+        if (el.type === "checkbox") q.v[k] = el.checked;
+        else q.v[k] = el.value === "" ? "" : el.tagName === "SELECT" ? el.value : Number(el.value);
+        markDirty();
+      });
+    });
     card.querySelector("[data-askall]").addEventListener("change", (e) => {
       if (e.target.checked) q.roles = [];
       else q.roles = d.roles.map((r) => r.id);
@@ -398,6 +509,12 @@ function bindQuestions() {
   });
 
   document.getElementById("saveQ").addEventListener("click", async (e) => {
+    const badRange = d.questions.findIndex((q) => q.v && q.v.min !== "" && q.v.max !== "" && q.v.min != null && q.v.max != null && Number(q.v.min) > Number(q.v.max));
+    if (badRange !== -1) {
+      S.msg = `Question ${badRange + 1}: the minimum is bigger than the maximum.`;
+      render();
+      return;
+    }
     const bad = d.questions.findIndex((q) => !q.label.trim() || (HAS_OPTIONS.includes(q.type) && !(q.options || []).length));
     if (bad !== -1) {
       const q = d.questions[bad];
@@ -416,6 +533,9 @@ function bindQuestions() {
         const o = { id: q.id || newId(), label: q.label.trim(), type: q.type, required: !!q.required, help: (q.help || "").trim() };
         if (HAS_OPTIONS.includes(q.type)) o.options = q.options;
         if (q.roles && q.roles.length) o.roles = q.roles;
+        const v = {};
+        Object.entries(q.v || {}).forEach(([k, val]) => { if (val !== "" && val !== false && val !== null && val !== undefined) v[k] = val; });
+        if (Object.keys(v).length) o.v = v;
         return o;
       }),
     };
@@ -427,6 +547,66 @@ function bindQuestions() {
       S.msg = "";
     } catch (err) {
       S.msg = "Couldn't save the questions. " + friendlyError(err);
+    }
+    render();
+  });
+}
+
+/* ------------------------- bans ------------------------- */
+function bansView() {
+  const rows = S.bans.length
+    ? S.bans.map((b) => {
+        const id = String(b.discordId || b.id);
+        return `<li class="admin-row">
+          <span class="admin-name"><img class="app-av" src="${esc(avatarUrl(id, "", 64))}" alt="" width="32" height="32"><b>${esc(b.discordName || "Unknown user")}</b><code>${esc(id)}</code></span>
+          <span class="admin-meta">${b.reason ? "Reason: " + esc(b.reason) + " · " : ""}${b.bannedBy ? "Banned by " + esc(b.bannedBy) + " · " : ""}${fmt(b.createdAt)}</span>
+          <span class="admin-act">${S.confirmUnban === id
+            ? `<span class="confirm">Unban? <button class="btn-ok" type="button" data-unban="${esc(id)}">Yes, unban</button><button class="pxbtn" type="button" data-unban-no>Cancel</button></span>`
+            : `<button class="pxbtn" type="button" data-unban-ask="${esc(id)}">Unban</button>`}</span>
+        </li>`;
+      }).join("")
+    : '<li class="empty">Nobody is banned.</li>';
+  return `
+  <div class="admins-grid">
+    <div class="panel admin-list" style="border-top-color:#ff6b6b">
+      <h3>Banned from applying</h3>
+      <p class="help">Banned Discord accounts can't send applications. The block is enforced by the database, so it can't be got around.</p>
+      <ul>${rows}</ul>
+    </div>
+    <form class="panel admin-form" id="banForm" autocomplete="off">
+      <h3>Ban a Discord account</h3>
+      <p class="help">You can also ban someone straight from their application. To find a Discord ID, turn on Developer Mode in Discord (Settings → Advanced), then right-click the user and choose <b>Copy User ID</b>.</p>
+      <label class="q-label" for="bid">Discord user ID</label>
+      <input class="inp" id="bid" name="did" inputmode="numeric" required placeholder="e.g. 123456789012345678">
+      <label class="q-label" for="bname">Name <span class="opt">(optional, just for your list)</span></label>
+      <input class="inp" id="bname" name="dname" maxlength="40">
+      <label class="q-label" for="breason">Reason <span class="opt">(the applicant will see this)</span></label>
+      <input class="inp" id="breason" name="breason" maxlength="200">
+      <button class="btn-danger" type="submit">Ban account</button>
+    </form>
+  </div>`;
+}
+
+function bindBans() {
+  bindBanButtons();
+  root.querySelectorAll("[data-unban-ask]").forEach((b) => b.addEventListener("click", () => { S.confirmUnban = b.dataset.unbanAsk; render(); }));
+  root.querySelectorAll("[data-unban-no]").forEach((b) => b.addEventListener("click", () => { S.confirmUnban = null; render(); }));
+  const f = document.getElementById("banForm");
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = f.elements.did.value.trim();
+    if (!/^\d{17,20}$/.test(id)) { S.msg = "A Discord user ID is a long number, 17 to 20 digits."; return render(); }
+    if (isBanned(id)) { S.msg = "That account is already banned."; return render(); }
+    const btn = f.querySelector("button");
+    btn.disabled = true;
+    btn.textContent = "Banning…";
+    try {
+      const known = S.apps.find((a) => a.discordId === id);
+      await api.ban(id, { discordName: f.elements.dname.value.trim() || (known && known.discordName) || "", reason: f.elements.breason.value.trim() });
+      S.bans = (await api.listBans()).sort((a, b) => b.createdAt - a.createdAt);
+      S.msg = "";
+    } catch (err) {
+      S.msg = "Couldn't ban that account. " + friendlyError(err);
     }
     render();
   });

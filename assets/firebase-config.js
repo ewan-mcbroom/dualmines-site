@@ -30,3 +30,4 @@ export const firebaseConfig = {
    e.g. username "ewan" logs in as ewan@dualmines.net in Firebase. */
 export const ADMIN_EMAIL_DOMAIN = "dualmines.net";
 export const OWNER_USERNAMES = ["zxppez"];
+export const DISCORD_AUTH_URL = "https://dualmines-auth.ewanmcbroom3.workers.dev";

@@ -369,3 +369,59 @@ select.inp{appearance:none;background-image:linear-gradient(45deg, transparent 5
 .pill-check span{display:inline-block;padding:6px 12px;border:2px solid var(--line);background:var(--bg);color:var(--muted);font-weight:700;font-size:.85rem}
 .pill-check input:checked + span{border-color:var(--ice);color:var(--ink);background:color-mix(in srgb, var(--ice) 14%, var(--bg))}
 .pill-check input:focus-visible + span{outline:3px solid var(--ice-hi);outline-offset:2px}
+
+/* discord + validation + bans */
+.dc-login{padding:clamp(22px,4vw,36px);display:grid;gap:14px;justify-items:start;border-top:4px solid var(--blurple)}
+.dc-login h2{font-size:clamp(1.6rem,4vw,2.2rem)}
+.dc-login p{color:var(--muted);max-width:56ch}
+.dc-login .discord-btn{cursor:pointer;font:inherit;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.dc-login .discord-btn:disabled{opacity:.6;cursor:default}
+.who-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;margin-bottom:18px;border-left:4px solid var(--blurple)}
+.who-bar img{border-radius:50%;flex:none}
+.who-text{flex:1;min-width:0}
+.who-text small{color:var(--muted)}
+.my-apps{padding:20px 22px;margin-top:20px}
+.my-apps h3{font-size:1.3rem;margin-bottom:8px}
+.my-apps ul{list-style:none;margin:0;padding:0;display:grid}
+.my-apps li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px dashed var(--line)}
+.my-apps li:last-child{border-bottom:0}
+.my-apps small{color:var(--muted);margin-left:6px}
+.limit{color:var(--ice-hi)}
+.counter{margin:-4px 0 0;text-align:right;color:var(--muted);font-size:.8rem;font-variant-numeric:tabular-nums}
+.vrow{display:flex;flex-wrap:wrap;gap:12px;align-items:end;padding:12px;background:var(--bg);border:2px dashed var(--line)}
+.vbox{display:grid;gap:4px;font-size:.85rem;color:var(--muted);font-weight:500;width:150px}
+.vbox.wide{width:220px}
+.vbox .inp{padding:8px 10px}
+.vrow .switch{padding-bottom:8px}
+.badge.red{background:#ff6b6b;color:#2a0505}
+.app-head{grid-template-columns:auto minmax(0,1fr) auto auto}
+.app-av{width:36px;height:36px;border-radius:50%;background:var(--panel-2);flex:none;display:block}
+@media (max-width:640px){.app-head{grid-template-columns:auto minmax(0,1fr) auto}.app-date{grid-column:2;grid-row:2}.chev{grid-row:1 / 3;grid-column:3}}
+.dc-card{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 14px;background:color-mix(in srgb, var(--blurple) 10%, var(--bg));border:2px solid color-mix(in srgb, var(--blurple) 40%, transparent)}
+.dc-card img{border-radius:50%}
+.dc-id{display:grid;flex:1;min-width:0}
+.dc-id span{color:var(--muted);font-size:.85rem;overflow-wrap:anywhere}
+.dc-id code{font-size:1em}
+.linkbtn{background:none;border:0;color:var(--ice);font:inherit;font-weight:700;cursor:pointer;padding:0 0 0 6px;text-decoration:underline}
+.ban-form{display:grid;gap:8px;padding:14px;border:2px solid color-mix(in srgb, #ff6b6b 45%, transparent);background:color-mix(in srgb, #ff6b6b 6%, var(--bg))}
+.admin-name code{color:var(--muted);font-size:1rem}
+.admin-name .app-av{width:32px;height:32px}
+
+/* online players popup */
+.live-wrap{position:relative;z-index:6}
+button.live{font:inherit;font-weight:700;font-size:.85rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);cursor:pointer}
+button.live:hover{border-color:var(--ice)}
+.live .caret{color:var(--ice);transition:transform .15s}
+.live[aria-expanded="true"] .caret{transform:rotate(180deg)}
+.players-pop{position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);width:min(300px, calc(100vw - 32px));text-align:left;padding:12px 14px;border-top:3px solid #5ee38a;box-shadow:0 10px 0 rgba(0,0,0,.35)}
+.pop-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.pop-head b{font-family:var(--pixel);font-size:1.15rem}
+.pop-x{background:none;border:0;color:var(--muted);font-size:1rem;cursor:pointer;padding:4px}
+.pop-x:hover{color:var(--ink)}
+.plist{list-style:none;margin:0;padding:0;display:grid;gap:2px;max-height:260px;overflow-y:auto}
+.plist li{display:flex;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px dashed var(--line)}
+.plist li:last-child{border-bottom:0}
+.plist img{image-rendering:pixelated;flex:none}
+.plist span{overflow-wrap:anywhere}
+.pop-note{color:var(--muted);font-size:.85rem;margin-top:8px}
+@media (prefers-reduced-motion:reduce){.live .caret{transition:none}}

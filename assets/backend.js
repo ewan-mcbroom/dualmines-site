@@ -1,8 +1,11 @@
 /* Storage + login for staff applications.
    Uses Firebase when firebase-config.js is filled in, otherwise a demo that saves in this browser. */
-import { firebaseConfig, ADMIN_EMAIL_DOMAIN, OWNER_USERNAMES } from "./firebase-config.js";
+import * as CFG from "./firebase-config.js";
 
-const OWNERS = (OWNER_USERNAMES || []).map((u) => u.toLowerCase());
+const firebaseConfig = CFG.firebaseConfig;
+const ADMIN_EMAIL_DOMAIN = CFG.ADMIN_EMAIL_DOMAIN || "dualmines.net";
+const OWNERS = (CFG.OWNER_USERNAMES || []).map((u) => u.toLowerCase());
+export const DISCORD_AUTH_URL = String(CFG.DISCORD_AUTH_URL || "").replace(/\/$/, "");
 export const USERNAME_RULE = /^[a-z0-9_.-]{3,20}$/;
 
 export const QUESTION_TYPES = {
@@ -27,18 +30,64 @@ export const DEFAULT_FORM = {
   roles: DEFAULT_ROLES,
   intro: "Want to help run Dualmines? Fill in the form below. We read every application and will get back to you on Discord.",
   questions: [
-    { id: "mc", label: "Minecraft username", type: "short", required: true, help: "" },
-    { id: "discord", label: "Discord username", type: "short", required: true, help: "So we can contact you." },
-    { id: "age", label: "How old are you?", type: "number", required: true, help: "" },
+    { id: "mc", label: "Minecraft username", type: "short", required: true, help: "", v: { format: "minecraft" } },
+    { id: "age", label: "How old are you?", type: "number", required: true, help: "", v: { min: 10, max: 99, whole: true } },
     { id: "tz", label: "What is your timezone?", type: "dropdown", required: true, help: "", options: ["UK (GMT/BST)", "Europe (CET)", "North America East", "North America West", "Asia / Oceania", "Other"] },
-    { id: "hours", label: "How many hours a week can you be active?", type: "number", required: true, help: "" },
-    { id: "why", label: "Why do you want to join the Dualmines staff team?", type: "paragraph", required: true, help: "Tell us about yourself. The more detail the better." },
+    { id: "hours", label: "How many hours a week can you be active?", type: "number", required: true, help: "", v: { min: 1, max: 168, whole: true } },
+    { id: "why", label: "Why do you want to join the Dualmines staff team?", type: "paragraph", required: true, help: "Tell us about yourself. The more detail the better.", v: { min: 50 } },
     { id: "exp", label: "Do you have any previous staff experience?", type: "paragraph", required: false, help: "Other servers, Discord communities, etc." },
-    { id: "portfolio", label: "Link to your builds or portfolio", type: "short", required: true, help: "Imgur album, Planet Minecraft, YouTube, etc.", roles: ["builder"] },
-    { id: "code", label: "What languages and tools have you used? Link any projects (e.g. GitHub).", type: "paragraph", required: true, help: "", roles: ["developer"] },
+    { id: "portfolio", label: "Link to your builds or portfolio", type: "short", required: true, help: "Imgur album, Planet Minecraft, YouTube, etc.", roles: ["builder"], v: { format: "url" } },
+    { id: "code", label: "What languages and tools have you used? Link any projects (e.g. GitHub).", type: "paragraph", required: true, help: "", roles: ["developer"], v: { min: 30 } },
     { id: "rules", label: "Have you read and agree to follow the server rules?", type: "yesno", required: true, help: "" },
   ],
 };
+
+/* ---------------- answer validation ---------------- */
+export const TEXT_LIMITS = { short: 200, paragraph: 3000 };
+export const FORMATS = {
+  "": { label: "Anything" },
+  minecraft: { label: "Minecraft username", test: (v) => /^[A-Za-z0-9_]{3,16}$/.test(v), msg: "That isn't a valid Minecraft username (3–16 letters, numbers or underscores)." },
+  url: { label: "Link (https://…)", test: (v) => /^https?:\/\/[^\s/$.?#][^\s]*\.[^\s]{2,}$/i.test(v), msg: "Enter a full link starting with https://" },
+  email: { label: "Email address", test: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v), msg: "Enter a valid email address." },
+  letters: { label: "Letters and spaces only", test: (v) => /^[\p{L} '-]+$/u.test(v), msg: "Use letters and spaces only." },
+};
+const num = (x) => (x === "" || x === null || x === undefined || isNaN(Number(x)) ? null : Number(x));
+
+/* Returns an error message, or "" if the answer is fine. value is a string (or an array for checkboxes). */
+export function checkAnswer(q, value) {
+  const v = q.v || {};
+  const min = num(v.min), max = num(v.max);
+  const empty = Array.isArray(value) ? !value.length : !String(value || "").trim();
+  if (empty) return q.required ? (q.type === "checkboxes" ? "Pick at least one option." : "This question is required.") : "";
+
+  if (q.type === "checkboxes") {
+    if (min !== null && value.length < min) return `Pick at least ${min} option${min === 1 ? "" : "s"}.`;
+    if (max !== null && value.length > max) return `Pick no more than ${max} option${max === 1 ? "" : "s"}.`;
+    return "";
+  }
+  if (q.type === "number") {
+    const n = Number(String(value).trim());
+    if (!isFinite(n)) return "Please enter a number.";
+    if (v.whole && !Number.isInteger(n)) return "Please enter a whole number.";
+    if (min !== null && n < min) return `The number must be ${min} or more.`;
+    if (max !== null && n > max) return `The number must be ${max} or less.`;
+    return "";
+  }
+  if (q.type === "short" || q.type === "paragraph") {
+    const t = String(value).trim();
+    const hard = TEXT_LIMITS[q.type];
+    if (t.length > hard) return `Keep it under ${hard} characters.`;
+    if (min !== null && t.length < min) return `Please write at least ${min} characters (you've written ${t.length}).`;
+    if (max !== null && t.length > max) return `Keep it under ${max} characters (you've written ${t.length}).`;
+    if (q.type === "paragraph" && min !== null && min >= 20) {
+      const words = t.split(/\s+/).filter((w) => w.length > 1);
+      if (words.length < 4 || new Set(t.toLowerCase().replace(/\s/g, "")).size < 6) return "Please write a proper answer in full sentences.";
+    }
+    const f = FORMATS[v.format || ""];
+    if (f && f.test && !f.test(t)) return f.msg;
+  }
+  return "";
+}
 
 /* Fills in anything missing from older saved forms. */
 export function normalizeForm(f) {
@@ -64,6 +113,20 @@ export function friendlyError(e) {
   return (e && e.message) || "Something went wrong. Please try again.";
 }
 
+const ms = (t) => (t && t.toMillis ? t.toMillis() : typeof t === "number" ? t : Date.now());
+const roleValue = (a) => { const r = (a.answers || []).find((x) => x.type === "role"); return r ? r.value : ""; };
+function randomState() {
+  const b = new Uint8Array(24);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+export function avatarUrl(id, avatar, size = 64) {
+  if (id && avatar) return `https://cdn.discordapp.com/avatars/${id}/${avatar}.${avatar.startsWith("a_") ? "gif" : "png"}?size=${size}`;
+  let n = 0;
+  try { n = Number((BigInt(id || 0) >> 22n) % 6n); } catch (e) {}
+  return `https://cdn.discordapp.com/embed/avatars/${n}.png`;
+}
+
 /* ---------------- Firebase ---------------- */
 async function firebaseApi() {
   const base = "https://www.gstatic.com/firebasejs/10.12.2/";
@@ -78,19 +141,97 @@ async function firebaseApi() {
   const formRef = fs.doc(db, "settings", "applicationForm");
   const apps = fs.collection(db, "applications");
 
+  // Applicants log in with Discord on a separate Firebase app, so it never mixes with an admin login.
+  const aApp = appMod.initializeApp(firebaseConfig, "applicant");
+  const aAuth = au.getAuth(aApp);
+  const aDb = fs.getFirestore(aApp);
+  let applicant = null;
+  const applicantReady = new Promise((resolve) => {
+    au.onAuthStateChanged(aAuth, async (u) => {
+      applicant = null;
+      if (u) {
+        try {
+          const c = (await u.getIdTokenResult()).claims;
+          if (c.discord_id) applicant = { uid: u.uid, id: c.discord_id, name: c.discord_name, display: c.discord_display || c.discord_name, avatar: c.discord_avatar || "" };
+        } catch (e) {}
+      }
+      resolve();
+    });
+  });
+
   return {
     demo: false,
+    discordReady: !!DISCORD_AUTH_URL,
+    startDiscordLogin() {
+      const state = randomState();
+      try { sessionStorage.setItem("dm_discord_state", state); } catch (e) {}
+      const ret = location.origin + location.pathname;
+      location.href = `${DISCORD_AUTH_URL}/login?state=${encodeURIComponent(state)}&return=${encodeURIComponent(ret)}`;
+    },
+    async finishDiscordLogin() {
+      const h = new URLSearchParams(location.hash.slice(1));
+      if (!h.has("discord_token") && !h.has("discord_error")) return null;
+      history.replaceState(null, "", location.pathname + location.search);
+      if (h.get("discord_error")) return h.get("discord_error") === "cancelled" ? "You cancelled the Discord login." : "Discord login failed. Please try again.";
+      let expected = null;
+      try { expected = sessionStorage.getItem("dm_discord_state"); sessionStorage.removeItem("dm_discord_state"); } catch (e) {}
+      if (!expected || expected !== h.get("state")) return "That login link has expired. Please log in again.";
+      try {
+        await au.signInWithCustomToken(aAuth, h.get("discord_token"));
+        const u = aAuth.currentUser;
+        const c = (await u.getIdTokenResult(true)).claims;
+        applicant = { uid: u.uid, id: c.discord_id, name: c.discord_name, display: c.discord_display || c.discord_name, avatar: c.discord_avatar || "" };
+      } catch (e) {
+        return "Discord login failed: " + friendlyError(e);
+      }
+      return null;
+    },
+    async getApplicant() { await applicantReady; return applicant; },
+    async applicantLogout() { await au.signOut(aAuth); applicant = null; },
+    async myStatus() {
+      if (!applicant) return { ban: null, apps: [] };
+      const ban = await fs.getDoc(fs.doc(aDb, "bans", applicant.id));
+      const mine = await fs.getDocs(fs.query(fs.collection(aDb, "applications"), fs.where("discordId", "==", applicant.id)));
+      return {
+        ban: ban.exists() ? ban.data() : null,
+        apps: mine.docs.map((d) => { const x = d.data(); return { id: d.id, status: x.status, role: roleValue(x), createdAt: ms(x.createdAt) }; }),
+      };
+    },
+    async listBans() {
+      const s = await fs.getDocs(fs.collection(db, "bans"));
+      return s.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: ms(d.data().createdAt) }));
+    },
+    ban: (id, info) => fs.setDoc(fs.doc(db, "bans", String(id)), {
+      discordId: String(id),
+      discordName: info.discordName || "",
+      reason: info.reason || "",
+      bannedBy: (auth.currentUser.email || "").split("@")[0],
+      createdAt: fs.serverTimestamp(),
+    }),
+    unban: (id) => fs.deleteDoc(fs.doc(db, "bans", String(id))),
     async getForm() {
       const s = await fs.getDoc(formRef);
       return s.exists() ? s.data() : clone(DEFAULT_FORM);
     },
     saveForm: (form) => fs.setDoc(formRef, form),
-    submit: (answers) => fs.addDoc(apps, { answers, status: "pending", createdAt: fs.serverTimestamp() }),
+    async submit(answers) {
+      if (!applicant) { const e = new Error("Please log in with Discord first."); e.code = "unauthenticated"; throw e; }
+      return fs.addDoc(fs.collection(aDb, "applications"), {
+        answers,
+        status: "pending",
+        createdAt: fs.serverTimestamp(),
+        uid: applicant.uid,
+        discordId: applicant.id,
+        discordName: applicant.name,
+        discordDisplay: applicant.display,
+        discordAvatar: applicant.avatar,
+      });
+    },
     async list() {
       const s = await fs.getDocs(apps);
       return s.docs.map((d) => {
         const x = d.data();
-        return { id: d.id, ...x, createdAt: x.createdAt && x.createdAt.toMillis ? x.createdAt.toMillis() : Date.now() };
+        return { id: d.id, ...x, createdAt: ms(x.createdAt) };
       });
     },
     setStatus: (id, status) => fs.updateDoc(fs.doc(db, "applications", id), { status }),
@@ -161,16 +302,19 @@ function demoApi() {
   const emit = () => listeners.forEach((cb) => cb(me()));
   const wait = () => new Promise((r) => setTimeout(r, 150));
 
-  if (!get("dm_demo_seeded_v2", false)) {
+  if (!get("dm_demo_seeded_v3", false)) {
     const now = Date.now();
     const sample = (name, discord, role, why, status, daysAgo) => ({
       id: "demo" + Math.random().toString(36).slice(2, 9),
       status,
       createdAt: now - daysAgo * 86400000,
+      discordId: String(900000000000000000 + daysAgo * 1234567),
+      discordName: discord,
+      discordDisplay: name,
+      discordAvatar: "",
       answers: [
         { q: "Role", type: "role", value: role },
         { q: "Minecraft username", type: "short", value: name },
-        { q: "Discord username", type: "short", value: discord },
         { q: "How old are you?", type: "number", value: "16" },
         { q: "What is your timezone?", type: "dropdown", value: "UK (GMT/BST)" },
         { q: "How many hours a week can you be active?", type: "number", value: "12" },
@@ -184,17 +328,47 @@ function demoApi() {
       sample("ExamplePlayer2", "example_two", "Builder", "Example application. I'd love to help build new arenas for the box.", "pending", 1),
       sample("ExamplePlayer3", "example_three", "Developer", "Example application. I already help new players learn how Box PvP works.", "accepted", 3),
     ]);
-    set("dm_demo_seeded_v2", true);
+    set("dm_demo_seeded_v3", true);
   }
 
+  const demoApplicant = () => { try { return JSON.parse(sessionStorage.getItem("dm_demo_applicant") || "null"); } catch (e) { return null; } };
   return {
     demo: true,
+    discordReady: true,
+    startDiscordLogin() {
+      const a = { uid: "discord:111122223333444455", id: "111122223333444455", name: "demo_player", display: "Demo Player", avatar: "" };
+      try { sessionStorage.setItem("dm_demo_applicant", JSON.stringify(a)); } catch (e) {}
+      location.reload();
+    },
+    async finishDiscordLogin() { return null; },
+    async getApplicant() { return demoApplicant(); },
+    async applicantLogout() { try { sessionStorage.removeItem("dm_demo_applicant"); } catch (e) {} },
+    async myStatus() {
+      await wait();
+      const a = demoApplicant();
+      if (!a) return { ban: null, apps: [] };
+      return {
+        ban: get("dm_demo_bans", []).find((b) => b.id === a.id) || null,
+        apps: get("dm_demo_apps", []).filter((x) => x.discordId === a.id).map((x) => ({ id: x.id, status: x.status, role: roleValue(x), createdAt: x.createdAt })),
+      };
+    },
+    async listBans() { await wait(); return get("dm_demo_bans", []); },
+    async ban(id, info) {
+      await wait();
+      const list = get("dm_demo_bans", []).filter((b) => b.id !== String(id));
+      list.push({ id: String(id), discordId: String(id), discordName: info.discordName || "", reason: info.reason || "", bannedBy: user, createdAt: Date.now() });
+      set("dm_demo_bans", list);
+    },
+    async unban(id) { await wait(); set("dm_demo_bans", get("dm_demo_bans", []).filter((b) => b.id !== String(id))); },
     async getForm() { await wait(); return get("dm_demo_form_v2", clone(DEFAULT_FORM)); },
     async saveForm(form) { await wait(); set("dm_demo_form_v2", form); },
     async submit(answers) {
       await wait();
+      const a = demoApplicant();
+      if (!a) { const e = new Error("Please log in with Discord first."); e.code = "unauthenticated"; throw e; }
+      if (get("dm_demo_bans", []).some((b) => b.id === a.id)) { const e = new Error(""); e.code = "permission-denied"; throw e; }
       const list = get("dm_demo_apps", []);
-      list.push({ id: "demo" + Date.now().toString(36), answers, status: "pending", createdAt: Date.now() });
+      list.push({ id: "demo" + Date.now().toString(36), answers, status: "pending", createdAt: Date.now(), uid: a.uid, discordId: a.id, discordName: a.name, discordDisplay: a.display, discordAvatar: a.avatar });
       set("dm_demo_apps", list);
     },
     async list() { await wait(); return get("dm_demo_apps", []); },
@@ -259,5 +433,25 @@ function demoApi() {
   }
 }
 
-const api = firebaseConfig && firebaseConfig.apiKey ? await firebaseApi() : demoApi();
+function withTimeout(promise, ms, msg) {
+  let t;
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => { t = setTimeout(() => { const e = new Error(msg); e.code = "timeout"; rej(e); }, ms); }),
+  ]).finally(() => clearTimeout(t));
+}
+
+let api;
+try {
+  api = firebaseConfig && firebaseConfig.apiKey
+    ? await withTimeout(firebaseApi(), 20000, "Firebase took too long to load. Check your internet connection, or turn off any ad blocker for this site.")
+    : demoApi();
+} catch (e) {
+  const msg = "Couldn't connect to Firebase: " + (e && e.message ? e.message : e);
+  window.__dmError && window.__dmError(msg);
+  throw e;
+}
+const rawGetForm = api.getForm;
+api.getForm = () => withTimeout(rawGetForm(), 15000,
+  "Couldn't reach the database. In Firebase, check that Firestore Database has been created and the rules have been published.");
 export default api;

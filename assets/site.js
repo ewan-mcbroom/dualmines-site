@@ -81,9 +81,40 @@ if ($("[data-players]")) {
       if (d && d.online && d.players) {
         $$("[data-players]").forEach((el) => (el.textContent = nf(d.players.online)));
         $$("[data-players-wrap]").forEach((el) => (el.hidden = false));
+        setupPlayerList(d.players);
       }
     })
     .catch(() => {});
+}
+
+function setupPlayerList(players) {
+  const btn = $("#playersBtn"), pop = $("#playersPop"), list = $("#playersList"), note = $("#playersNote");
+  if (!btn || !pop) return;
+  const names = (players.list || []).map((p) => (typeof p === "string" ? p : p.name)).filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+  list.innerHTML = names
+    .map((n) => `<li><img src="https://mc-heads.net/avatar/${encodeURIComponent(n)}/32" alt="" width="24" height="24" loading="lazy"><span>${esc(n)}</span></li>`)
+    .join("");
+  $$("img", list).forEach((img) => img.addEventListener("error", () => (img.style.visibility = "hidden")));
+  const online = Number(players.online) || 0;
+  let msg = "";
+  if (!online) msg = "Nobody's on right now. Be the first!";
+  else if (!names.length) msg = "The server doesn't share player names, but " + nf(online) + (online === 1 ? " player is" : " players are") + " online.";
+  else if (names.length < online) msg = "+ " + nf(online - names.length) + " more. Minecraft only shares some names.";
+  note.textContent = msg;
+  note.hidden = !msg;
+  list.hidden = !names.length;
+
+  const close = () => { pop.hidden = true; btn.setAttribute("aria-expanded", "false"); };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = pop.hidden;
+    pop.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+  });
+  $("#playersClose").addEventListener("click", () => { close(); btn.focus(); });
+  document.addEventListener("click", (e) => { if (!pop.hidden && !pop.contains(e.target)) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pop.hidden) { close(); btn.focus(); } });
 }
 if ($("[data-discord]")) {
   fetch("https://discord.com/api/v10/invites/" + SITE.discordInvite + "?with_counts=true")
