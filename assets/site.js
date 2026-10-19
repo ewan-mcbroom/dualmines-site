@@ -75,16 +75,37 @@ if (menuBtn) {
 /* ---------- live counts ---------- */
 const nf = (n) => Number(n).toLocaleString("en-GB");
 if ($("[data-players]")) {
-  fetch("https://api.mcsrvstat.us/3/" + SITE.ip)
-    .then((r) => r.json())
-    .then((d) => {
-      if (d && d.online && d.players) {
-        $$("[data-players]").forEach((el) => (el.textContent = nf(d.players.online)));
-        $$("[data-players-wrap]").forEach((el) => (el.hidden = false));
-        setupPlayerList(d.players);
-      }
+  // 1. The DualminesStatus plugin's list in Firebase (has every name), if it checked in recently.
+  // 2. Otherwise the public server ping (count only).
+  const fromPlugin = import("./firebase-config.js")
+    .then((cfg) => {
+      const c = cfg.firebaseConfig;
+      if (!c || !c.projectId || !c.apiKey) return null;
+      return fetch(`https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/status/players?key=${c.apiKey}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null));
     })
-    .catch(() => {});
+    .then((doc) => {
+      const f = doc && doc.fields;
+      if (!f || !f.updatedAt) return null;
+      if (Date.now() - new Date(f.updatedAt.timestampValue).getTime() > 6 * 60 * 1000) return null; // plugin hasn't checked in
+      const values = (f.players && f.players.arrayValue && f.players.arrayValue.values) || [];
+      const list = values.map((v) => ({ name: v.mapValue.fields.name.stringValue })).filter((p) => p.name);
+      return { online: Number(f.online && f.online.integerValue) || list.length, list, complete: true };
+    })
+    .catch(() => null);
+
+  const fromPing = fetch("https://api.mcsrvstat.us/3/" + SITE.ip)
+    .then((r) => r.json())
+    .then((d) => (d && d.online && d.players ? d.players : null))
+    .catch(() => null);
+
+  Promise.all([fromPlugin, fromPing]).then(([plugin, ping]) => {
+    const players = plugin || ping;
+    if (!players) return;
+    $$("[data-players]").forEach((el) => (el.textContent = nf(players.online)));
+    $$("[data-players-wrap]").forEach((el) => (el.hidden = false));
+    setupPlayerList(players);
+  });
 }
 
 function setupPlayerList(players) {
@@ -99,8 +120,8 @@ function setupPlayerList(players) {
   const online = Number(players.online) || 0;
   let msg = "";
   if (!online) msg = "Nobody's on right now. Be the first!";
-  else if (!names.length) msg = "The server doesn't share player names, but " + nf(online) + (online === 1 ? " player is" : " players are") + " online.";
-  else if (names.length < online) msg = "+ " + nf(online - names.length) + " more. Minecraft only shares some names.";
+  else if (!names.length) msg = nf(online) + (online === 1 ? " player is" : " players are") + " online. Names aren't available right now.";
+  else if (names.length < online && !players.complete) msg = "+ " + nf(online - names.length) + " more.";
   note.textContent = msg;
   note.hidden = !msg;
   list.hidden = !names.length;

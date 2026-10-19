@@ -35,6 +35,12 @@ service cloud.firestore {
       allow write: if isOwner();
     }
 
+    // Online players, written by the Cloudflare Worker (from the DualminesStatus plugin).
+    match /status/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /settings/applicationForm {
       allow read: if true;
       allow write: if isAdmin();
