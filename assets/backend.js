@@ -90,12 +90,69 @@ export function checkAnswer(q, value) {
 }
 
 /* Fills in anything missing from older saved forms. */
-export function normalizeForm(f) {
-  const form = { ...JSON.parse(JSON.stringify(DEFAULT_FORM)), ...(f || {}) };
+/* ---------------- appeals ---------------- */
+export const DEFAULT_APPEAL_TYPES = [
+  { id: "mcban", name: "Minecraft ban", open: true, blurb: "You're banned from play.dualmines.net." },
+  { id: "mcmute", name: "Minecraft mute", open: true, blurb: "You're muted in the server chat." },
+  { id: "dcban", name: "Discord ban", open: true, blurb: "You're banned from the Dualmines Discord." },
+];
+export const DEFAULT_APPEAL_FORM = {
+  open: true,
+  roles: DEFAULT_APPEAL_TYPES,
+  files: { enabled: true, required: false },
+  intro: "Think your punishment was a mistake, or ready for a second chance? Tell us what happened. Be honest: appeals with false information are denied.",
+  questions: [
+    { id: "mc", label: "Minecraft username", type: "short", required: true, help: "", v: { format: "minecraft" } },
+    { id: "when", label: "When were you punished?", type: "short", required: false, help: "A rough date is fine.", v: { max: 100 } },
+    { id: "reason", label: "What reason were you given for your punishment?", type: "short", required: true, help: "", v: { max: 200 } },
+    { id: "why", label: "Why should your punishment be removed?", type: "paragraph", required: true, help: "Explain what happened and what you'd do differently.", v: { min: 50 } },
+    { id: "extra", label: "Is there anything else we should know?", type: "paragraph", required: false, help: "" },
+    { id: "honest", label: "Do you understand that lying in your appeal will get it denied?", type: "yesno", required: true, help: "" },
+  ],
+};
+export const UPLOAD = { max: 5, maxBytes: 25 * 1000 * 1000, accept: "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime" };
+
+/* Fills in anything missing from older saved forms. kind is "apply" or "appeal". */
+export function normalizeForm(f, kind = "apply") {
+  const defaults = kind === "appeal" ? DEFAULT_APPEAL_FORM : DEFAULT_FORM;
+  const types = kind === "appeal" ? DEFAULT_APPEAL_TYPES : DEFAULT_ROLES;
+  const form = { ...JSON.parse(JSON.stringify(defaults)), ...(f || {}) };
   const saved = Array.isArray(form.roles) ? form.roles : [];
-  form.roles = DEFAULT_ROLES.map((d) => ({ ...d, ...(saved.find((r) => r.id === d.id) || {}) }));
+  form.roles = types.map((d) => ({ ...d, ...(saved.find((r) => r.id === d.id) || {}) }));
   form.questions = (form.questions || []).map((q) => ({ ...q, roles: Array.isArray(q.roles) ? q.roles : [] }));
+  if (kind === "appeal") form.files = { enabled: true, required: false, ...(form.files || {}) };
   return form;
+}
+
+/* Upload with progress (fetch can't report upload progress). */
+function xhrUpload(url, token, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", url);
+    x.setRequestHeader("Authorization", "Bearer " + token);
+    x.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    x.setRequestHeader("X-File-Name", encodeURIComponent(file.name || "file"));
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress && onProgress(e.loaded / e.total);
+    x.onload = () => {
+      let body = {};
+      try { body = JSON.parse(x.responseText); } catch (e) {}
+      if (x.status >= 200 && x.status < 300) resolve(body);
+      else reject(Object.assign(new Error(body.error || "Upload failed (" + x.status + ")"), { status: x.status }));
+    };
+    x.onerror = () => reject(new Error("Upload failed. Check your internet connection."));
+    x.send(file);
+  });
+}
+async function workerCall(path, token, body) {
+  if (!DISCORD_AUTH_URL) throw new Error("The appeals service isn't set up yet.");
+  const res = await fetch(DISCORD_AUTH_URL + path, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || "Request failed (" + res.status + ")"), { status: res.status });
+  return data;
 }
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -214,6 +271,48 @@ async function firebaseApi() {
       return s.exists() ? s.data() : clone(DEFAULT_FORM);
     },
     saveForm: (form) => fs.setDoc(formRef, form),
+    async getAppealForm() {
+      const s = await fs.getDoc(fs.doc(db, "settings", "appealForm"));
+      return s.exists() ? s.data() : clone(DEFAULT_APPEAL_FORM);
+    },
+    saveAppealForm: (form) => fs.setDoc(fs.doc(db, "settings", "appealForm"), form),
+
+    /* appeals: player side */
+    async myAppeals() {
+      if (!applicant) return [];
+      const s = await fs.getDocs(fs.query(fs.collection(aDb, "appeals"), fs.where("discordId", "==", applicant.id)));
+      return s.docs.map((d) => { const x = d.data(); return { id: d.id, ...x, createdAt: ms(x.createdAt), decidedAt: x.decidedAt ? ms(x.decidedAt) : 0 }; });
+    },
+    async submitAppeal(typeId, answers, files, onProgress) {
+      if (!applicant) { const e = new Error("Please log in with Discord first."); e.code = "unauthenticated"; throw e; }
+      const token = await aAuth.currentUser.getIdToken();
+      const { id } = await workerCall("/appeal/start", token, { type: typeId, answers, fileCount: files.length });
+      for (let i = 0; i < files.length; i++) {
+        await xhrUpload(`${DISCORD_AUTH_URL}/appeal/file?id=${encodeURIComponent(id)}&n=${i}`, token, files[i], (f) => onProgress && onProgress(i, f));
+        onProgress && onProgress(i, 1);
+      }
+      await workerCall(`/appeal/finish?id=${encodeURIComponent(id)}`, token);
+      return id;
+    },
+
+    /* appeals: admin side */
+    async listAppeals() {
+      const s = await fs.getDocs(fs.collection(db, "appeals"));
+      return s.docs.map((d) => { const x = d.data(); return { id: d.id, ...x, createdAt: ms(x.createdAt), decidedAt: x.decidedAt ? ms(x.decidedAt) : 0 }; });
+    },
+    async appealVerdict(id, verdict, note) {
+      return workerCall("/appeal/verdict", await auth.currentUser.getIdToken(), { id, verdict, note });
+    },
+    async deleteAppeals(ids) {
+      return workerCall("/appeal/delete", await auth.currentUser.getIdToken(), { ids });
+    },
+    async appealFileUrl(id, n) {
+      const res = await fetch(`${DISCORD_AUTH_URL}/appeal/file?id=${encodeURIComponent(id)}&n=${n}`, {
+        headers: { Authorization: "Bearer " + (await auth.currentUser.getIdToken()) },
+      });
+      if (!res.ok) throw new Error("Couldn't load this file.");
+      return URL.createObjectURL(await res.blob());
+    },
     async submit(answers) {
       if (!applicant) { const e = new Error("Please log in with Discord first."); e.code = "unauthenticated"; throw e; }
       return fs.addDoc(fs.collection(aDb, "applications"), {
@@ -280,6 +379,31 @@ async function firebaseApi() {
       }
     },
     removeAdmin: (uid) => fs.deleteDoc(fs.doc(db, "admins", uid)),
+
+    /* admin activity log (only owners can read it) */
+    log(action, summary, details = {}) {
+      const u = auth.currentUser;
+      if (!u) return Promise.resolve();
+      return fs.addDoc(fs.collection(db, "logs"), {
+        action: String(action).slice(0, 40),
+        summary: String(summary).slice(0, 480),
+        details: JSON.parse(JSON.stringify(details || {})),
+        actor: (u.email || "").split("@")[0],
+        actorUid: u.uid,
+        at: fs.serverTimestamp(),
+      });
+    },
+    async listLogs(max = 500) {
+      const s = await fs.getDocs(fs.query(fs.collection(db, "logs"), fs.orderBy("at", "desc"), fs.limit(max)));
+      return s.docs.map((d) => ({ id: d.id, ...d.data(), at: ms(d.data().at) }));
+    },
+    async clearLogs(ids) {
+      for (let i = 0; i < ids.length; i += 400) {
+        const batch = fs.writeBatch(db);
+        ids.slice(i, i + 400).forEach((id) => batch.delete(fs.doc(db, "logs", id)));
+        await batch.commit();
+      }
+    },
     async changePassword(current, next) {
       const u = auth.currentUser;
       await au.reauthenticateWithCredential(u, au.EmailAuthProvider.credential(u.email, current));
@@ -361,6 +485,66 @@ function demoApi() {
     },
     async unban(id) { await wait(); set("dm_demo_bans", get("dm_demo_bans", []).filter((b) => b.id !== String(id))); },
     async getForm() { await wait(); return get("dm_demo_form_v2", clone(DEFAULT_FORM)); },
+    async getAppealForm() { await wait(); return get("dm_demo_appeal_form", clone(DEFAULT_APPEAL_FORM)); },
+    async saveAppealForm(form) { await wait(); set("dm_demo_appeal_form", form); },
+    async myAppeals() {
+      await wait();
+      const a = demoApplicant();
+      return a ? get("dm_demo_appeals", []).filter((x) => x.discordId === a.id) : [];
+    },
+    async submitAppeal(typeId, answers, files, onProgress) {
+      const a = demoApplicant();
+      if (!a) { const e = new Error("Please log in with Discord first."); e.code = "unauthenticated"; throw e; }
+      const list = get("dm_demo_appeals", []);
+      if (list.some((x) => x.discordId === a.id && x.status === "pending")) throw new Error("You already have an appeal waiting to be reviewed.");
+      const form = get("dm_demo_appeal_form", clone(DEFAULT_APPEAL_FORM));
+      const type = (normalizeForm(form, "appeal").roles.find((t) => t.id === typeId) || {}).name || typeId;
+      const stored = [];
+      for (let i = 0; i < files.length; i++) {
+        for (let p = 0.25; p <= 1; p += 0.25) { await new Promise((r) => setTimeout(r, 60)); onProgress && onProgress(i, p); }
+        let url = "";
+        if (files[i].size < 400000) url = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => r(""); fr.readAsDataURL(files[i]); });
+        stored.push({ n: i, name: files[i].name, type: files[i].type, size: files[i].size, demoUrl: url });
+      }
+      const id = "ap" + Date.now().toString(36);
+      list.push({ id, answers, type, typeId, status: "pending", createdAt: Date.now(), uid: a.uid, discordId: a.id, discordName: a.name, discordDisplay: a.display, discordAvatar: a.avatar, fileCount: files.length, files: stored, submitted: true });
+      try { set("dm_demo_appeals", list); } catch (e) {}
+      return id;
+    },
+    async listAppeals() {
+      await wait();
+      if (!get("dm_demo_appeals_seeded", false)) {
+        set("dm_demo_appeals", [...get("dm_demo_appeals", []), {
+          id: "apdemo1", type: "Minecraft ban", typeId: "mcban", status: "pending", createdAt: Date.now() - 3600e3, submitted: true,
+          discordId: "900000000000000123", discordName: "example_appealer", discordDisplay: "Example Appealer", discordAvatar: "", fileCount: 0, files: [],
+          answers: [
+            { q: "Minecraft username", type: "short", value: "ExampleAppealer" },
+            { q: "What reason were you given for your punishment?", type: "short", value: "Using an auto-clicker" },
+            { q: "Why should your punishment be removed?", type: "paragraph", value: "Example appeal. My mouse was double clicking by itself; I've replaced it since and won't use any macros." },
+          ],
+        }]);
+        set("dm_demo_appeals_seeded", true);
+      }
+      return get("dm_demo_appeals", []);
+    },
+    async appealVerdict(id, verdict, note) {
+      await wait();
+      const ap = get("dm_demo_appeals", []).find((x) => x.id === id) || {};
+      set("dm_demo_appeals", get("dm_demo_appeals", []).map((x) => (x.id === id ? { ...x, status: verdict, verdictNote: note, decidedBy: user, decidedAt: Date.now(), dmSent: false, dmError: "Demo mode: no Discord message was sent." } : x)));
+      await this.log("appeal." + verdict, `${verdict === "accepted" ? "Accepted" : "Denied"} the ${ap.type || ""} appeal from @${ap.discordName || "?"}`, { appealId: id, discordId: ap.discordId, note });
+      return { ok: true, dmSent: false, dmError: "Demo mode: no Discord message was sent." };
+    },
+    async deleteAppeals(ids) {
+      await wait();
+      set("dm_demo_appeals", get("dm_demo_appeals", []).filter((x) => !ids.includes(x.id)));
+      await this.log("appeal.delete", `Deleted ${ids.length} appeal${ids.length === 1 ? "" : "s"}`, { count: ids.length });
+    },
+    async appealFileUrl(id, n) {
+      const a = get("dm_demo_appeals", []).find((x) => x.id === id);
+      const f = a && (a.files || []).find((x) => x.n === n);
+      if (!f || !f.demoUrl) throw new Error("Demo mode only keeps small files.");
+      return f.demoUrl;
+    },
     async saveForm(form) { await wait(); set("dm_demo_form_v2", form); },
     async submit(answers) {
       await wait();
@@ -408,6 +592,14 @@ function demoApi() {
       list.push({ uid: "u" + Date.now().toString(36), username, password, addedBy: user });
       set("dm_demo_users", list);
     },
+    async log(action, summary, details = {}) {
+      if (!user) return;
+      const list = get("dm_demo_logs", []);
+      list.unshift({ id: "lg" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), action, summary, details, actor: user, actorUid: (me() || {}).uid, at: Date.now() });
+      set("dm_demo_logs", list.slice(0, 500));
+    },
+    async listLogs() { await wait(); return get("dm_demo_logs", []); },
+    async clearLogs(ids) { await wait(); set("dm_demo_logs", get("dm_demo_logs", []).filter((l) => !ids.includes(l.id))); },
     async removeAdmin(uid) {
       await wait();
       set("dm_demo_users", users().filter((a) => a.uid !== uid || a.username === "admin"));
@@ -451,7 +643,9 @@ try {
   window.__dmError && window.__dmError(msg);
   throw e;
 }
+const DB_MSG = "Couldn't reach the database. In Firebase, check that Firestore Database has been created and the rules have been published.";
 const rawGetForm = api.getForm;
-api.getForm = () => withTimeout(rawGetForm(), 15000,
-  "Couldn't reach the database. In Firebase, check that Firestore Database has been created and the rules have been published.");
+api.getForm = () => withTimeout(rawGetForm(), 15000, DB_MSG);
+const rawGetAppealForm = api.getAppealForm;
+api.getAppealForm = () => withTimeout(rawGetAppealForm(), 15000, DB_MSG);
 export default api;

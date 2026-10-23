@@ -41,9 +41,37 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Admin activity log. Any admin can add an entry in their own name only;
+    // nobody can edit entries; only owners can read or delete them.
+    match /logs/{id} {
+      allow read, delete: if isOwner();
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['action', 'summary', 'details', 'actor', 'actorUid', 'at'])
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.actor == request.auth.token.email.split('@')[0]
+        && request.resource.data.at == request.time
+        && request.resource.data.action is string && request.resource.data.action.size() <= 40
+        && request.resource.data.summary is string && request.resource.data.summary.size() <= 480;
+      allow update: if false;
+    }
+
     match /settings/applicationForm {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    match /settings/appealForm {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Appeals are only created by the Cloudflare Worker (it checks the Discord login
+    // and stores the files). Players can read their own; admins can read and manage all.
+    match /appeals/{id} {
+      allow read: if isAdmin()
+        || (isApplicant() && resource.data.discordId == request.auth.token.discord_id);
+      allow create: if false;
+      allow update, delete: if isAdmin();
     }
 
     // Bans: admins manage them; a Discord user can check their own ban.
