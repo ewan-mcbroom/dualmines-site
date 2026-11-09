@@ -482,3 +482,27 @@ button.live:hover{border-color:var(--ice)}
 .admin-bar > .tabs::-webkit-scrollbar{display:none}
 .tab-btn{flex:none;white-space:nowrap}
 @media (max-width:640px){.admin-bar{display:grid}.admin-bar > .tabs{order:2}.who{order:1;padding-bottom:4px}}
+
+/* staff / media application switch */
+.app-switch{margin-bottom:30px;max-width:760px}
+.as-label{font-weight:700;font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.as-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:600px){.as-grid{grid-template-columns:1fr}}
+.as-card{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:16px 18px;text-decoration:none;color:var(--ink);background:var(--panel);border:3px solid var(--line);box-shadow:0 6px 0 rgba(0,0,0,.35);transition:transform .12s, border-color .12s, box-shadow .12s}
+.as-card:hover{border-color:var(--c);transform:translateY(-3px);box-shadow:0 9px 0 rgba(0,0,0,.35)}
+.as-card:focus-visible{outline:3px solid var(--ice-hi);outline-offset:3px}
+.as-icon{width:48px;height:48px;display:grid;place-items:center;background:color-mix(in srgb, var(--c) 18%, var(--bg));color:var(--c);border:2px solid color-mix(in srgb, var(--c) 45%, transparent)}
+.as-icon svg{width:26px;height:26px}
+.as-text{display:grid;gap:2px;min-width:0}
+.as-text b{font-family:var(--pixel);font-size:1.35rem;line-height:1.1}
+.as-text small{color:var(--muted);font-size:.88rem}
+.as-go{font-size:1.5rem;color:var(--c);font-weight:700}
+.as-tag{font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;background:var(--c);color:#0b1219;white-space:nowrap}
+.as-card[aria-current="page"]{border-color:var(--c);background:color-mix(in srgb, var(--c) 14%, var(--panel));box-shadow:0 0 0 2px color-mix(in srgb, var(--c) 35%, transparent), 0 6px 0 rgba(0,0,0,.35)}
+.as-card[aria-current="page"] .as-icon{background:var(--c);color:#0b1219;border-color:var(--c)}
+.as-card[aria-current="page"]:hover{transform:none}
+@media (prefers-reduced-motion:reduce){.as-card{transition:none}.as-card:hover{transform:none}}
+@media (max-width:420px){.as-tag{display:none}}
+.as-tag{position:absolute;top:-11px;right:12px;box-shadow:0 2px 0 rgba(0,0,0,.35)}
+.as-card[aria-current="page"]{grid-template-columns:auto minmax(0,1fr)}
+@media (max-width:420px){.as-tag{display:inline-block}}
