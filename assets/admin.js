@@ -28,6 +28,9 @@ const S = {
   confirmUnban: null,
   kind: "apply",
   applyForm: null,
+  mediaForm: null,
+  track: "staff",
+  appsBy: { staff: [], media: [] },
   appealForm: null,
   appeals: [],
   appealFilter: "pending",
@@ -44,6 +47,21 @@ const S = {
   confirmClearLogs: false,
   justLoggedIn: false,
 };
+const trackForm = (t = S.track) => (t === "media" ? S.mediaForm : S.applyForm);
+const trackWord = (t = S.track) => (t === "media" ? "media" : "staff");
+function setApps(list, t = S.track) {
+  S.appsBy[t] = list;
+  if (t === S.track) S.apps = list;
+}
+function switchTrack(t) {
+  S.track = t;
+  S.apps = S.appsBy[t];
+  S.filter = "pending";
+  S.roleFilter = "all";
+  S.openId = null;
+  S.banFor = null;
+  S.confirmClear = false;
+}
 /* Record an admin action for the owner's log. Never blocks the action itself. */
 function logAction(action, summary, details) {
   try { api.log(action, summary, details).catch(() => {}); } catch (e) {}
@@ -91,9 +109,16 @@ async function loadApps() {
   S.loadingApps = true;
   render();
   try {
-    const [apps, bans, appeals] = await Promise.all([api.list(), api.listBans().catch(() => S.bans), api.listAppeals().catch(() => S.appeals)]);
+    const [apps, mediaApps, bans, appeals] = await Promise.all([
+      api.list("staff"),
+      api.list("media").catch(() => S.appsBy.media),
+      api.listBans().catch(() => S.bans),
+      api.listAppeals().catch(() => S.appeals),
+    ]);
+    S.appsBy.media = mediaApps.sort((a, b) => b.createdAt - a.createdAt);
     S.appeals = appeals.filter((a) => a.submitted !== false || Date.now() - a.createdAt > 3600e3).sort((a, b) => b.createdAt - a.createdAt);
-    S.apps = apps.sort((a, b) => b.createdAt - a.createdAt);
+    S.appsBy.staff = apps.sort((a, b) => b.createdAt - a.createdAt);
+    S.apps = S.appsBy[S.track];
     S.bans = bans.sort((a, b) => b.createdAt - a.createdAt);
     S.msg = "";
   } catch (e) {
@@ -110,6 +135,11 @@ async function loadForm() {
     S.applyForm = normalizeForm(null, "apply");
   }
   try {
+    S.mediaForm = normalizeForm(await api.getForm("media"), "media");
+  } catch (e) {
+    S.mediaForm = normalizeForm(null, "media");
+  }
+  try {
     S.appealForm = normalizeForm(await api.getAppealForm(), "appeal");
   } catch (e) {
     S.appealForm = normalizeForm(null, "appeal");
@@ -118,7 +148,7 @@ async function loadForm() {
 }
 function useKind(kind) {
   S.kind = kind;
-  S.form = kind === "appeal" ? S.appealForm : S.applyForm;
+  S.form = kind === "appeal" ? S.appealForm : kind === "media" ? S.mediaForm : S.applyForm;
   S.draft = clone(S.form);
   S.dirty = false;
 }
@@ -128,7 +158,8 @@ function render() {
   if (!S.user) return;
   const counts = { pending: 0, accepted: 0, rejected: 0 };
   S.apps.filter(roleMatch).forEach((a) => (counts[a.status] = (counts[a.status] || 0) + 1));
-  const allPending = S.apps.filter((a) => a.status === "pending").length;
+  const pendingOf = (t) => S.appsBy[t].filter((a) => a.status === "pending").length;
+  const allPending = pendingOf("staff") + pendingOf("media");
   const appealsPending = S.appeals.filter((a) => a.status === "pending").length;
   root.innerHTML = `
   <div class="admin-bar">
@@ -174,7 +205,7 @@ function roleOf(a) {
 }
 function roleMatch(a) {
   if (S.roleFilter === "all") return true;
-  const role = S.applyForm && S.applyForm.roles.find((r) => r.id === S.roleFilter);
+  const role = trackForm() && trackForm().roles.find((r) => r.id === S.roleFilter);
   return !!role && roleOf(a).toLowerCase() === role.name.toLowerCase();
 }
 function titleFor(a) {
@@ -192,7 +223,7 @@ function appsView(counts) {
   const list = S.apps.filter((a) => a.status === S.filter && roleMatch(a));
   const roleSel = `<select class="inp role-filter" id="roleFilter" aria-label="Filter by role">
       <option value="all">All roles</option>
-      ${S.applyForm.roles.map((r) => `<option value="${esc(r.id)}"${S.roleFilter === r.id ? " selected" : ""}>${esc(r.name)}</option>`).join("")}
+      ${trackForm().roles.map((r) => `<option value="${esc(r.id)}"${S.roleFilter === r.id ? " selected" : ""}>${esc(r.name)}</option>`).join("")}
     </select>`;
   const filters = ["pending", "accepted", "rejected"]
     .map((f) => `<button class="sub-btn" aria-pressed="${S.filter === f}" data-filter="${f}" style="--c:${STATUS_COL[f]}">${STATUS_LABEL[f]} <span>${counts[f] || 0}</span></button>`)
@@ -201,7 +232,7 @@ function appsView(counts) {
   const clear = !canClear
     ? ""
     : S.confirmClear
-    ? `<span class="confirm">Delete all ${list.length} ${S.filter} applications? This can't be undone.
+    ? `<span class="confirm">Delete all ${list.length} ${S.filter} ${trackWord()} applications? This can't be undone.
          <button class="btn-danger" id="clearYes" type="button">Yes, clear list</button>
          <button class="pxbtn" id="clearNo" type="button">Cancel</button></span>`
     : `<button class="btn-danger ghost" id="clearList" type="button">Clear ${S.filter} list</button>`;
@@ -210,9 +241,14 @@ function appsView(counts) {
     ? '<p class="empty panel">Loading applications…</p>'
     : list.length
     ? list.map(appItem).join("")
-    : `<p class="empty panel">No ${S.filter} applications.</p>`;
+    : `<p class="empty panel">No ${S.filter} ${trackWord()} applications.</p>`;
 
+  const tp = (t) => S.appsBy[t].filter((a) => a.status === "pending").length;
   return `
+  <div class="kind-switch" aria-label="Which applications">
+    <button class="sub-btn" type="button" data-track="staff" aria-pressed="${S.track === "staff"}" style="--c:var(--ice)">Staff applications <span>${tp("staff")}</span></button>
+    <button class="sub-btn" type="button" data-track="media" aria-pressed="${S.track === "media"}" style="--c:#ff6bb5">Media applications <span>${tp("media")}</span></button>
+  </div>
   <div class="toolbar">
     <div class="subtabs">${filters}${roleSel}</div>
     <div class="toolbar-right">${clear}<button class="pxbtn" id="refresh" type="button">${S.loadingApps ? "Refreshing…" : "Refresh"}</button></div>
@@ -287,8 +323,10 @@ function bindBanButtons() {
         await api.ban(a.discordId, { discordName: a.discordName, reason: f.reason.value.trim() });
         let rejected = 0;
         if (f.reject.checked) {
-          const mine = S.apps.filter((x) => x.discordId === a.discordId && x.status === "pending");
-          for (const x of mine) { await api.setStatus(x.id, "rejected"); x.status = "rejected"; rejected++; }
+          for (const t of ["staff", "media"]) {
+            const mine = S.appsBy[t].filter((x) => x.discordId === a.discordId && x.status === "pending");
+            for (const x of mine) { await api.setStatus(x.id, "rejected", t); x.status = "rejected"; rejected++; }
+          }
         }
         logAction("ban", `Banned @${a.discordName} from applying${f.reason.value.trim() ? ` (reason: ${f.reason.value.trim()})` : ""}${rejected ? `, and rejected ${rejected} pending application${rejected === 1 ? "" : "s"}` : ""}`, { discordId: a.discordId });
         S.bans = await api.listBans();
@@ -320,6 +358,9 @@ function bindBanButtons() {
 
 function bindApps() {
   bindBanButtons();
+  root.querySelectorAll("[data-track]").forEach((b) =>
+    b.addEventListener("click", () => { if (b.dataset.track !== S.track) { switchTrack(b.dataset.track); render(); } })
+  );
   root.querySelectorAll("[data-filter]").forEach((b) =>
     b.addEventListener("click", () => { S.filter = b.dataset.filter; S.openId = null; S.confirmClear = false; render(); })
   );
@@ -331,11 +372,11 @@ function bindApps() {
       const id = b.dataset.id, status = b.dataset.act;
       b.disabled = true;
       try {
-        await api.setStatus(id, status);
+        await api.setStatus(id, status, S.track);
         const a = S.apps.find((x) => x.id === id);
         if (a) {
           const verb = { accepted: "Accepted", rejected: "Rejected", pending: "Moved back to pending" }[status];
-          logAction("application." + status, `${verb} the ${roleOf(a) || "staff"} application from ${titleFor(a)}${a.discordName ? " (@" + a.discordName + ")" : ""}${a.status !== "pending" && status !== "pending" ? ` (was ${a.status})` : ""}`, { applicationId: id, discordId: a.discordId || "" });
+          logAction("application." + status, `${verb} the ${roleOf(a) || trackWord()} ${S.track === "media" ? "media " : ""}application from ${titleFor(a)}${a.discordName ? " (@" + a.discordName + ")" : ""}${a.status !== "pending" && status !== "pending" ? ` (was ${a.status})` : ""}`, { applicationId: id, kind: S.track, discordId: a.discordId || "" });
         }
         if (a) a.status = status;
         S.openId = null;
@@ -361,9 +402,9 @@ function bindApps() {
       y.disabled = true;
       y.textContent = "Clearing…";
       try {
-        await api.remove(ids);
-        logAction("application.clear", `Cleared the ${S.filter} applications list (${ids.length} deleted)`, { count: ids.length });
-        S.apps = S.apps.filter((a) => !ids.includes(a.id));
+        await api.remove(ids, S.track);
+        logAction("application.clear", `Cleared the ${S.filter} ${trackWord()} applications list (${ids.length} deleted)`, { count: ids.length, kind: S.track });
+        setApps(S.apps.filter((a) => !ids.includes(a.id)));
         S.msg = "";
       } catch (e) {
         S.msg = "Couldn't clear the list. " + friendlyError(e);
@@ -436,22 +477,24 @@ function questionsView() {
     .join("");
 
   const ap = S.kind === "appeal";
+  const md = S.kind === "media";
   const word = ap ? "Appeals" : "Applications";
   return `
   <div class="kind-switch" role="tablist" aria-label="Which form">
-    <button class="sub-btn" type="button" data-kind="apply" aria-pressed="${!ap}" style="--c:var(--ice)">Staff application form</button>
+    <button class="sub-btn" type="button" data-kind="apply" aria-pressed="${S.kind === "apply"}" style="--c:var(--ice)">Staff application form</button>
+    <button class="sub-btn" type="button" data-kind="media" aria-pressed="${md}" style="--c:#ff6bb5">Media application form</button>
     <button class="sub-btn" type="button" data-kind="appeal" aria-pressed="${ap}" style="--c:var(--gold)">Appeal form</button>
   </div>
   <div class="panel settings">
-    <h3>${ap ? "Appeal form settings" : "Application form settings"}</h3>
+    <h3>${ap ? "Appeal form settings" : md ? "Media application form settings" : "Staff application form settings"}</h3>
     <label class="switch big"><input type="checkbox" id="openToggle"${d.open ? " checked" : ""}><span class="sw"></span>${word} are <b>${d.open ? "open" : "closed"}</b></label>
     <label class="q-label" for="intro">Intro text <span class="opt">(shown at the top of the form)</span></label>
     <textarea class="inp" id="intro" rows="3">${esc(d.intro || "")}</textarea>
-    <p class="q-label">${ap ? "Punishments people can appeal" : "Roles open for applications"}</p>
+    <p class="q-label">${ap ? "Punishments people can appeal" : md ? "Creator types open for applications" : "Roles open for applications"}</p>
     <div class="role-toggles">
       ${d.roles.map((r) => `<label class="switch role-toggle"><input type="checkbox" data-roleopen="${esc(r.id)}"${r.open ? " checked" : ""}><span class="sw"></span><span><b>${esc(r.name)}</b> <small>${r.open ? "Open" : "Closed"}</small></span></label>`).join("")}
     </div>
-    ${d.open && !d.roles.some((r) => r.open) ? `<p class="help" style="color:var(--gold)">Everything above is switched off, so the ${ap ? "Appeal" : "Apply"} page will show as closed.</p>` : ""}
+    ${d.open && !d.roles.some((r) => r.open) ? `<p class="help" style="color:var(--gold)">Everything above is switched off, so the ${ap ? "Appeal" : md ? "Media" : "Apply"} page will show as closed.</p>` : ""}
     ${ap ? `<p class="q-label">Evidence uploads</p>
     <div class="role-toggles">
       <label class="switch role-toggle"><input type="checkbox" id="filesOn"${d.files.enabled !== false ? " checked" : ""}><span class="sw"></span><span><b>Allow file uploads</b> <small>up to 5 images or videos, 25 MB each</small></span></label>
@@ -462,7 +505,7 @@ function questionsView() {
   <button class="pxbtn add-q" id="addQ" type="button">+ Add question</button>
   <div class="savebar${S.dirty ? " dirty" : ""}">
     <span>${S.dirty ? "You have unsaved changes." : "All changes saved."}</span>
-    <a class="pxbtn" href="${S.kind === "appeal" ? "appeal.html" : "apply.html"}" target="_blank" rel="noopener">View form</a>
+    <a class="pxbtn" href="${S.kind === "appeal" ? "appeal.html" : S.kind === "media" ? "media.html" : "apply.html"}" target="_blank" rel="noopener">View form</a>
     <button class="pxbtn" id="discard" type="button"${S.dirty ? "" : " disabled"}>Discard</button>
     <button class="btn-main" id="saveQ" type="button"${S.dirty ? "" : " disabled"}>Save changes</button>
   </div>`;
@@ -620,12 +663,16 @@ function bindQuestions() {
         await api.saveAppealForm(clean);
         logAction("questions.appeal", `Saved the appeal form (${clean.questions.length} questions, appeals ${clean.open ? "open" : "closed"})`, {});
         S.appealForm = normalizeForm(clean, "appeal");
+      } else if (S.kind === "media") {
+        await api.saveForm(clean, "media");
+        logAction("questions.media", `Saved the media application form (${clean.questions.length} questions, applications ${clean.open ? "open" : "closed"})`, {});
+        S.mediaForm = normalizeForm(clean, "media");
       } else {
-        await api.saveForm(clean);
+        await api.saveForm(clean, "staff");
         logAction("questions.apply", `Saved the staff application form (${clean.questions.length} questions, applications ${clean.open ? "open" : "closed"})`, {});
         S.applyForm = normalizeForm(clean, "apply");
       }
-      S.form = S.kind === "appeal" ? S.appealForm : S.applyForm;
+      S.form = S.kind === "appeal" ? S.appealForm : S.kind === "media" ? S.mediaForm : S.applyForm;
       S.draft = clone(S.form);
       S.dirty = false;
       S.msg = "";
@@ -1022,7 +1069,7 @@ function bindBans() {
     btn.disabled = true;
     btn.textContent = "Banning…";
     try {
-      const known = S.apps.find((a) => a.discordId === id);
+      const known = [...S.appsBy.staff, ...S.appsBy.media].find((a) => a.discordId === id);
       const bname = f.elements.dname.value.trim() || (known && known.discordName) || "";
       await api.ban(id, { discordName: bname, reason: f.elements.breason.value.trim() });
       logAction("ban", `Banned ${bname ? "@" + bname : "Discord ID " + id} from applying${f.elements.breason.value.trim() ? ` (reason: ${f.elements.breason.value.trim()})` : ""}`, { discordId: id });
@@ -1215,6 +1262,7 @@ api.onAuth(async (user) => {
   S.user = user;
   if (!user) {
     S.apps = [];
+    S.appsBy = { staff: [], media: [] };
     S.form = S.draft = null;
     renderLogin();
     return;

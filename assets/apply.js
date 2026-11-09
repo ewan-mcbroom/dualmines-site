@@ -1,7 +1,12 @@
 import api, { friendlyError, normalizeForm, checkAnswer, TEXT_LIMITS } from "./backend.js";
 import { esc, DISCORD_SVG, fmtDate, field, readRaw, whoBar, bindLogout, showErr, wireLiveChecks } from "./form-ui.js";
 
-const root = document.getElementById("apply");
+/* This script runs both the staff (#apply) and media (#media) application pages. */
+const root = document.getElementById("apply") || document.getElementById("media");
+const KIND = root.id === "media" ? "media" : "staff";
+const T = KIND === "media"
+  ? { what: "media", form: "media application form", pick: "What kind of creator are you?", pickErr: "Choose what kind of creator you are.", applyAs: "a Dualmines media creator as a" }
+  : { what: "staff", form: "application form", pick: "What are you applying for?", pickErr: "Choose which role you're applying for.", applyAs: "a Dualmines" };
 const STATUS = { pending: ["Pending", "var(--ice)"], accepted: ["Accepted", "#5ee38a"], rejected: ["Not successful", "#ff6b6b"] };
 
 function demoBanner() {
@@ -27,20 +32,20 @@ async function start() {
 
   let data;
   try {
-    data = normalizeForm(await api.getForm());
+    data = normalizeForm(await api.getForm(KIND), KIND === "media" ? "media" : "apply");
   } catch (e) {
-    root.innerHTML = `<p class="empty panel">The application form couldn't load. ${esc(friendlyError(e))}</p>`;
+    root.innerHTML = `<p class="empty panel">The ${T.form} couldn't load. ${esc(friendlyError(e))}</p>`;
     return;
   }
   const questions = (data.questions || []).filter((q) => q && q.label);
   const openRoles = data.roles.filter((r) => r.open);
 
   if (!data.open || !openRoles.length) {
-    root.innerHTML = `${demoBanner()}<div class="panel closed"><h2>Applications are closed</h2><p>We're not taking staff applications right now. Keep an eye on the News page and our Discord for when they open again.</p></div>`;
+    root.innerHTML = `${demoBanner()}<div class="panel closed"><h2>Applications are closed</h2><p>We're not taking ${T.what} applications right now. Keep an eye on the News page and our Discord for when they open again.</p></div>`;
     return;
   }
   if (!questions.length) {
-    root.innerHTML = `<p class="empty panel">The application form hasn't been set up yet. Check back soon!</p>`;
+    root.innerHTML = `<p class="empty panel">The ${T.form} hasn't been set up yet. Check back soon!</p>`;
     return;
   }
   if (!api.discordReady) {
@@ -70,7 +75,7 @@ async function start() {
   /* ---- banned / already pending ---- */
   let status = { ban: null, apps: [] };
   try {
-    status = await api.myStatus();
+    status = await api.myStatus(KIND);
   } catch (e) {
     root.innerHTML = `${whoBar(me)}<p class="empty panel">Couldn't check your application status. ${esc(friendlyError(e))}</p>`;
     bindLogout();
@@ -79,7 +84,7 @@ async function start() {
   if (status.ban) {
     root.innerHTML = `${demoBanner()}${whoBar(me)}
       <div class="panel closed"><h2>You can't apply</h2>
-        <p>Your Discord account has been blocked from sending staff applications.${status.ban.reason ? ` Reason: <b>${esc(status.ban.reason)}</b>` : ""}</p>
+        <p>Your Discord account has been blocked from sending applications.${status.ban.reason ? ` Reason: <b>${esc(status.ban.reason)}</b>` : ""}</p>
         <p>If you think this is a mistake, contact a staff member on our Discord.</p></div>`;
     bindLogout();
     return;
@@ -88,7 +93,7 @@ async function start() {
   if (pending) {
     root.innerHTML = `${demoBanner()}${whoBar(me)}
       <div class="panel done"><h2>Application received</h2>
-        <p>Your <b>${esc(pending.role || "staff")}</b> application from ${fmtDate(pending.createdAt)} is waiting to be reviewed. You can't send another one until it's been looked at. We'll contact you on Discord.</p></div>
+        <p>Your <b>${esc(pending.role || T.what)}</b> ${KIND === "media" ? "media " : ""}application from ${fmtDate(pending.createdAt)} is waiting to be reviewed. You can't send another one until it's been looked at. We'll contact you on Discord.</p></div>
       ${historyList(status.apps)}`;
     bindLogout();
     return;
@@ -99,7 +104,7 @@ async function start() {
     ${data.intro ? `<p class="lead">${esc(data.intro)}</p>` : ""}
     <form id="appForm" novalidate>
       <div class="field panel role-field" data-role-pick>
-        <p class="q-label" id="role_l">What are you applying for? <span class="req" title="Required">*</span></p>
+        <p class="q-label" id="role_l">${T.pick} <span class="req" title="Required">*</span></p>
         <div class="role-cards" role="radiogroup" aria-labelledby="role_l">
           ${openRoles.map((r) => `<label class="role-card"><input type="radio" name="role" value="${esc(r.id)}"${openRoles.length === 1 ? " checked" : ""}><b>${esc(r.name)}</b>${r.blurb ? `<span>${esc(r.blurb)}</span>` : ""}</label>`).join("")}
         </div>
@@ -140,7 +145,7 @@ async function start() {
 
     const role = chosenRole();
     const rp = form.querySelector("[data-role-pick]");
-    showErr(rp, role ? "" : "Choose which role you're applying for.");
+    showErr(rp, role ? "" : T.pickErr);
     if (!role) firstBad = rp;
 
     const asked = questions.map((q, i) => [q, i]).filter(([q]) => role && applies(q, role));
@@ -170,10 +175,10 @@ async function start() {
     btn.disabled = true;
     btn.textContent = "Sending…";
     try {
-      await api.submit(answers);
+      await api.submit(answers, KIND);
       root.innerHTML = `${whoBar(me)}<div class="panel done">
         <h2>Application sent!</h2>
-        <p>Thanks for applying to be a Dualmines <b>${esc(roleName)}</b>. We read every application and will contact you on Discord at <b>@${esc(me.name)}</b>.</p>
+        <p>Thanks for applying to be ${T.applyAs} <b>${esc(roleName)}</b>. We read every application and will contact you on Discord at <b>@${esc(me.name)}</b>.</p>
         <a class="btn-main" href="./">Back to home</a>
       </div>`;
       bindLogout();

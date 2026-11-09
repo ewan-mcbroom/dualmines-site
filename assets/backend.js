@@ -90,6 +90,35 @@ export function checkAnswer(q, value) {
 }
 
 /* Fills in anything missing from older saved forms. */
+/* ---------------- media applications ---------------- */
+export const DEFAULT_MEDIA_ROLES = [
+  { id: "youtube", name: "YouTuber", open: true, blurb: "Videos, shorts and series about Dualmines." },
+  { id: "streamer", name: "Streamer", open: true, blurb: "Live streams on Twitch, Kick or YouTube." },
+  { id: "shortform", name: "TikTok / Shorts", open: true, blurb: "Short clips on TikTok, Reels or Shorts." },
+];
+export const DEFAULT_MEDIA_FORM = {
+  open: true,
+  roles: DEFAULT_MEDIA_ROLES,
+  intro: "Make videos or stream? Apply for the Media rank to get perks on Dualmines in return for creating content about the server. We'll review your channel and get back to you on Discord.",
+  questions: [
+    { id: "mc", label: "Minecraft username", type: "short", required: true, help: "", v: { format: "minecraft" } },
+    { id: "age", label: "How old are you?", type: "number", required: true, help: "", v: { min: 13, max: 99, whole: true } },
+    { id: "channel", label: "Link to your channel", type: "short", required: true, help: "YouTube, Twitch, Kick or TikTok.", v: { format: "url" } },
+    { id: "followers", label: "How many subscribers or followers do you have?", type: "number", required: true, help: "", v: { min: 0, whole: true } },
+    { id: "views", label: "How many views do your videos or streams usually get?", type: "number", required: true, help: "A rough average is fine.", v: { min: 0, whole: true } },
+    { id: "often", label: "How often do you post or stream?", type: "dropdown", required: true, help: "", options: ["Every day", "A few times a week", "Once a week", "A few times a month", "Less often"] },
+    { id: "plan", label: "What kind of Dualmines content would you make?", type: "paragraph", required: true, help: "Tell us your ideas: series, challenges, events, etc.", v: { min: 50 } },
+    { id: "previous", label: "Have you made any Dualmines content before? Link it here.", type: "paragraph", required: false, help: "" },
+    { id: "agree", label: "Do you agree to follow the server rules and represent Dualmines positively?", type: "yesno", required: true, help: "" },
+  ],
+};
+/* kind: "staff" or "media" */
+const APP_KINDS = {
+  staff: { form: "applicationForm", coll: "applications", demoForm: "dm_demo_form_v2", demoApps: "dm_demo_apps" },
+  media: { form: "mediaForm", coll: "mediaApplications", demoForm: "dm_demo_media_form", demoApps: "dm_demo_media_apps" },
+};
+const K = (kind) => APP_KINDS[kind] || APP_KINDS.staff;
+
 /* ---------------- appeals ---------------- */
 export const DEFAULT_APPEAL_TYPES = [
   { id: "mcban", name: "Minecraft ban", open: true, blurb: "You're banned from play.dualmines.net." },
@@ -114,8 +143,8 @@ export const UPLOAD = { max: 5, maxBytes: 25 * 1000 * 1000, accept: "image/png,i
 
 /* Fills in anything missing from older saved forms. kind is "apply" or "appeal". */
 export function normalizeForm(f, kind = "apply") {
-  const defaults = kind === "appeal" ? DEFAULT_APPEAL_FORM : DEFAULT_FORM;
-  const types = kind === "appeal" ? DEFAULT_APPEAL_TYPES : DEFAULT_ROLES;
+  const defaults = kind === "appeal" ? DEFAULT_APPEAL_FORM : kind === "media" ? DEFAULT_MEDIA_FORM : DEFAULT_FORM;
+  const types = kind === "appeal" ? DEFAULT_APPEAL_TYPES : kind === "media" ? DEFAULT_MEDIA_ROLES : DEFAULT_ROLES;
   const form = { ...JSON.parse(JSON.stringify(defaults)), ...(f || {}) };
   const saved = Array.isArray(form.roles) ? form.roles : [];
   form.roles = types.map((d) => ({ ...d, ...(saved.find((r) => r.id === d.id) || {}) }));
@@ -195,8 +224,6 @@ async function firebaseApi() {
   const app = appMod.initializeApp(firebaseConfig);
   const db = fs.getFirestore(app);
   const auth = au.getAuth(app);
-  const formRef = fs.doc(db, "settings", "applicationForm");
-  const apps = fs.collection(db, "applications");
 
   // Applicants log in with Discord on a separate Firebase app, so it never mixes with an admin login.
   const aApp = appMod.initializeApp(firebaseConfig, "applicant");
@@ -245,10 +272,10 @@ async function firebaseApi() {
     },
     async getApplicant() { await applicantReady; return applicant; },
     async applicantLogout() { await au.signOut(aAuth); applicant = null; },
-    async myStatus() {
+    async myStatus(kind = "staff") {
       if (!applicant) return { ban: null, apps: [] };
       const ban = await fs.getDoc(fs.doc(aDb, "bans", applicant.id));
-      const mine = await fs.getDocs(fs.query(fs.collection(aDb, "applications"), fs.where("discordId", "==", applicant.id)));
+      const mine = await fs.getDocs(fs.query(fs.collection(aDb, K(kind).coll), fs.where("discordId", "==", applicant.id)));
       return {
         ban: ban.exists() ? ban.data() : null,
         apps: mine.docs.map((d) => { const x = d.data(); return { id: d.id, status: x.status, role: roleValue(x), createdAt: ms(x.createdAt) }; }),
@@ -266,11 +293,11 @@ async function firebaseApi() {
       createdAt: fs.serverTimestamp(),
     }),
     unban: (id) => fs.deleteDoc(fs.doc(db, "bans", String(id))),
-    async getForm() {
-      const s = await fs.getDoc(formRef);
-      return s.exists() ? s.data() : clone(DEFAULT_FORM);
+    async getForm(kind = "staff") {
+      const s = await fs.getDoc(fs.doc(db, "settings", K(kind).form));
+      return s.exists() ? s.data() : clone(kind === "media" ? DEFAULT_MEDIA_FORM : DEFAULT_FORM);
     },
-    saveForm: (form) => fs.setDoc(formRef, form),
+    saveForm: (form, kind = "staff") => fs.setDoc(fs.doc(db, "settings", K(kind).form), form),
     async getAppealForm() {
       const s = await fs.getDoc(fs.doc(db, "settings", "appealForm"));
       return s.exists() ? s.data() : clone(DEFAULT_APPEAL_FORM);
@@ -313,9 +340,9 @@ async function firebaseApi() {
       if (!res.ok) throw new Error("Couldn't load this file.");
       return URL.createObjectURL(await res.blob());
     },
-    async submit(answers) {
+    async submit(answers, kind = "staff") {
       if (!applicant) { const e = new Error("Please log in with Discord first."); e.code = "unauthenticated"; throw e; }
-      return fs.addDoc(fs.collection(aDb, "applications"), {
+      return fs.addDoc(fs.collection(aDb, K(kind).coll), {
         answers,
         status: "pending",
         createdAt: fs.serverTimestamp(),
@@ -326,18 +353,18 @@ async function firebaseApi() {
         discordAvatar: applicant.avatar,
       });
     },
-    async list() {
-      const s = await fs.getDocs(apps);
+    async list(kind = "staff") {
+      const s = await fs.getDocs(fs.collection(db, K(kind).coll));
       return s.docs.map((d) => {
         const x = d.data();
         return { id: d.id, ...x, createdAt: ms(x.createdAt) };
       });
     },
-    setStatus: (id, status) => fs.updateDoc(fs.doc(db, "applications", id), { status }),
-    async remove(ids) {
+    setStatus: (id, status, kind = "staff") => fs.updateDoc(fs.doc(db, K(kind).coll, id), { status }),
+    async remove(ids, kind = "staff") {
       for (let i = 0; i < ids.length; i += 400) {
         const batch = fs.writeBatch(db);
-        ids.slice(i, i + 400).forEach((id) => batch.delete(fs.doc(db, "applications", id)));
+        ids.slice(i, i + 400).forEach((id) => batch.delete(fs.doc(db, K(kind).coll, id)));
         await batch.commit();
       }
     },
@@ -467,13 +494,13 @@ function demoApi() {
     async finishDiscordLogin() { return null; },
     async getApplicant() { return demoApplicant(); },
     async applicantLogout() { try { sessionStorage.removeItem("dm_demo_applicant"); } catch (e) {} },
-    async myStatus() {
+    async myStatus(kind = "staff") {
       await wait();
       const a = demoApplicant();
       if (!a) return { ban: null, apps: [] };
       return {
         ban: get("dm_demo_bans", []).find((b) => b.id === a.id) || null,
-        apps: get("dm_demo_apps", []).filter((x) => x.discordId === a.id).map((x) => ({ id: x.id, status: x.status, role: roleValue(x), createdAt: x.createdAt })),
+        apps: get(K(kind).demoApps, []).filter((x) => x.discordId === a.id).map((x) => ({ id: x.id, status: x.status, role: roleValue(x), createdAt: x.createdAt })),
       };
     },
     async listBans() { await wait(); return get("dm_demo_bans", []); },
@@ -484,7 +511,7 @@ function demoApi() {
       set("dm_demo_bans", list);
     },
     async unban(id) { await wait(); set("dm_demo_bans", get("dm_demo_bans", []).filter((b) => b.id !== String(id))); },
-    async getForm() { await wait(); return get("dm_demo_form_v2", clone(DEFAULT_FORM)); },
+    async getForm(kind = "staff") { await wait(); return get(K(kind).demoForm, clone(kind === "media" ? DEFAULT_MEDIA_FORM : DEFAULT_FORM)); },
     async getAppealForm() { await wait(); return get("dm_demo_appeal_form", clone(DEFAULT_APPEAL_FORM)); },
     async saveAppealForm(form) { await wait(); set("dm_demo_appeal_form", form); },
     async myAppeals() {
@@ -545,24 +572,45 @@ function demoApi() {
       if (!f || !f.demoUrl) throw new Error("Demo mode only keeps small files.");
       return f.demoUrl;
     },
-    async saveForm(form) { await wait(); set("dm_demo_form_v2", form); },
-    async submit(answers) {
+    async saveForm(form, kind = "staff") { await wait(); set(K(kind).demoForm, form); },
+    async submit(answers, kind = "staff") {
       await wait();
       const a = demoApplicant();
       if (!a) { const e = new Error("Please log in with Discord first."); e.code = "unauthenticated"; throw e; }
       if (get("dm_demo_bans", []).some((b) => b.id === a.id)) { const e = new Error(""); e.code = "permission-denied"; throw e; }
-      const list = get("dm_demo_apps", []);
+      const list = get(K(kind).demoApps, []);
       list.push({ id: "demo" + Date.now().toString(36), answers, status: "pending", createdAt: Date.now(), uid: a.uid, discordId: a.id, discordName: a.name, discordDisplay: a.display, discordAvatar: a.avatar });
-      set("dm_demo_apps", list);
+      set(K(kind).demoApps, list);
     },
-    async list() { await wait(); return get("dm_demo_apps", []); },
-    async setStatus(id, status) {
+    async list(kind = "staff") {
       await wait();
-      set("dm_demo_apps", get("dm_demo_apps", []).map((a) => (a.id === id ? { ...a, status } : a)));
+      if (kind === "media" && !get("dm_demo_media_seeded", false)) {
+        set("dm_demo_media_apps", [...get("dm_demo_media_apps", []), {
+          id: "mdemo1", status: "pending", createdAt: Date.now() - 2 * 3600e3,
+          discordId: "900000000000000777", discordName: "example_creator", discordDisplay: "Example Creator", discordAvatar: "",
+          answers: [
+            { q: "Role", type: "role", value: "YouTuber" },
+            { q: "Minecraft username", type: "short", value: "ExampleCreator" },
+            { q: "How old are you?", type: "number", value: "17" },
+            { q: "Link to your channel", type: "short", value: "https://youtube.com/@examplecreator" },
+            { q: "How many subscribers or followers do you have?", type: "number", value: "4200" },
+            { q: "How many views do your videos or streams usually get?", type: "number", value: "1500" },
+            { q: "How often do you post or stream?", type: "dropdown", value: "A few times a week" },
+            { q: "What kind of Dualmines content would you make?", type: "paragraph", value: "Example application. A Box PvP series going from no gear to the best kit, plus weekly highlight montages." },
+            { q: "Do you agree to follow the server rules and represent Dualmines positively?", type: "yesno", value: "Yes" },
+          ],
+        }]);
+        set("dm_demo_media_seeded", true);
+      }
+      return get(K(kind).demoApps, []);
     },
-    async remove(ids) {
+    async setStatus(id, status, kind = "staff") {
       await wait();
-      set("dm_demo_apps", get("dm_demo_apps", []).filter((a) => !ids.includes(a.id)));
+      set(K(kind).demoApps, get(K(kind).demoApps, []).map((a) => (a.id === id ? { ...a, status } : a)));
+    },
+    async remove(ids, kind = "staff") {
+      await wait();
+      set(K(kind).demoApps, get(K(kind).demoApps, []).filter((a) => !ids.includes(a.id)));
     },
     async login(u, p) {
       await wait();
@@ -645,7 +693,7 @@ try {
 }
 const DB_MSG = "Couldn't reach the database. In Firebase, check that Firestore Database has been created and the rules have been published.";
 const rawGetForm = api.getForm;
-api.getForm = () => withTimeout(rawGetForm(), 15000, DB_MSG);
+api.getForm = (kind) => withTimeout(rawGetForm(kind), 15000, DB_MSG);
 const rawGetAppealForm = api.getAppealForm;
 api.getAppealForm = () => withTimeout(rawGetAppealForm(), 15000, DB_MSG);
 export default api;
